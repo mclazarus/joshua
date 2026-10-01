@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.env.op
+*.db
+*.db-*
+data/
+.pytest_cache/
+.ruff_cache/
+tests/fixtures/raw/
+.playwright-mcp/

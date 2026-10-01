@@ -1,0 +1,40 @@
+# Example for paradox, following the home-docks-infra conventions:
+#   - image tag is the short git SHA, written to .env by scripts/build-ship.sh
+#   - state lives in a /srv/<app> bind mount (absolute path: compose runs from the Mac
+#     against a remote docker context)
+#   - secrets come from `op run --env-file=.env.op` at deploy time, never written to disk
+#   - Socket Mode means no ports, no tunnel, no ingress
+name: joshua
+
+services:
+  bot:
+    image: joshua:${JOSHUA_IMAGE_TAG:?run scripts/build-ship.sh joshua ~/src/joshua first}
+    container_name: joshua-bot
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    volumes:
+      - /srv/joshua/data:/data
+    environment:
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:?}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:?}
+      JOSHUA_SECRET_KEY: ${JOSHUA_SECRET_KEY:?}
+      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:?}
+      JOSHUA_ADMINS: ${JOSHUA_ADMINS:-}
+      DEFAULT_TZ: America/New_York
+      DEFAULT_LOUD_HOURS: "08:00-22:00"
+      POLL_SECONDS: "300"
+    healthcheck:
+      test: ["CMD", "joshua", "healthcheck"]
+      interval: 60s
+      timeout: 10s
+      start_period: 180s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

@@ -1,0 +1,3 @@
+"""Joshua: GREETINGS PROFESSOR FALKEN. SHALL WE PLAY A GAME?"""
+
+__version__ = "0.1.0"

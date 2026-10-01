@@ -1,0 +1,34 @@
+# Local test run against a sandbox Slack workspace:
+#   cp .env.example .env   # fill in sandbox tokens + test channel
+#   make dev-up && make dev-logs
+name: joshua-dev
+
+services:
+  bot:
+    build:
+      context: .
+      target: production
+    image: joshua:dev
+    container_name: joshua-dev
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_PATH: /data/joshua.db
+    user: "${UID:-501}:${GID:-20}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "joshua", "healthcheck"]
+      interval: 60s
+      timeout: 10s
+      start_period: 180s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

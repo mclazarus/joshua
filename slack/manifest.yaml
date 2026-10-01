@@ -1,0 +1,38 @@
+# Paste into https://api.slack.com/apps → Create New App → From an app manifest.
+# Then: Basic Information → App-Level Tokens → generate one with connections:write
+# (that's SLACK_APP_TOKEN, xapp-…). Install to workspace for SLACK_BOT_TOKEN (xoxb-…).
+display_information:
+  name: Joshua
+  description: "A strange game. The only winning move is not to play. …but you're playing anyway, and it's your turn."
+  background_color: "#0a1f0a"
+  long_description: >-
+    GREETINGS PROFESSOR FALKEN. I am Joshua, the War Operation Plan Response computer, now assigned to
+    monitoring our WarGear games. I post in the war room when it's your turn and raise the DEFCON level
+    the longer you stall. Final warnings at 30 and 5 minutes before you're skipped come through even in
+    quiet hours. When a game ends I remind the winner to start the next one. Ask me "whose turn is it?"
+    or type /wargear help. A strange game. The only winning move is not to play.
+features:
+  bot_user:
+    display_name: Joshua
+    always_online: true
+  slash_commands:
+    - command: /wargear
+      description: "Shall we play a game? WarGear turns, games and registration."
+      usage_hint: "games | me | register <wargear name> | apikey | hours 08:00-22:00 | help"
+      should_escape: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - commands
+      - users:read
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+  interactivity:
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
