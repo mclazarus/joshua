@@ -44,7 +44,9 @@ async def game_rows(deps: Deps, only_player: str | None = None) -> list[m.GameRo
             turns = [t for t in turns if t.player.lower() == only_player.lower()]
             if not turns:
                 continue
-        waiting = [(m.Who(t.player, t.slack_id), t.started_at, t.deadline) for t in turns]
+        waiting = [
+            (m.Who(t.player, t.slack_id), t.started_at, t.deadline, deps.notifier.tz_for(t.tz)) for t in turns
+        ]
         players = []
         for p in g.players:
             if g.open:
@@ -80,6 +82,10 @@ def register(app: AsyncApp, deps: Deps) -> None:
 
     def is_admin(user_id: str) -> bool:
         return not settings.admin_ids or user_id in settings.admin_ids
+
+    async def announce(client, text: str) -> None:
+        """Say it in the war room, so changes aren't made silently."""
+        await client.chat_postMessage(channel=settings.slack_channel_id, text=text)
 
     async def refresh_tz(client, user_id: str) -> None:
         try:
@@ -149,7 +155,11 @@ def register(app: AsyncApp, deps: Deps) -> None:
                 )
 
             case "games" | "status" | "list":
-                await say(m.games_overview(await game_rows(deps), now_ts()))
+                text_, blocks = m.games_overview(await game_rows(deps), now_ts())
+                if muted := await store.unwatched_games():
+                    names = ", ".join(f"{name} (#{gid})" for gid, name in muted)
+                    blocks.append(m._context(f"🔕 Unwatched: {names}. `/wargear watch <id>` to resume."))
+                await say((text_, blocks))
 
             case "game":
                 if not (ref := GAME_REF.search(rest)):
@@ -166,16 +176,27 @@ def register(app: AsyncApp, deps: Deps) -> None:
                 pairs = [(p.wargear_name, p.slack_id, p.tz) for p in await store.players() if p.wargear_name]
                 await say(m.who_table(pairs))
 
-            case "track" | "untrack":
+            case "watch" | "track" | "unwatch" | "untrack" | "mute":
+                watch = verb in ("watch", "track")
                 if not (ref := GAME_REF.search(rest)):
                     return await plain(f"Usage: `/wargear {verb} <game id or link>`")
                 gameid = int(ref.group(1))
-                if not await store.set_tracked(gameid, verb == "track"):
+                if not await store.set_tracked(gameid, watch):
                     return await plain(
                         f"I can't see game #{gameid}. Someone in it needs to give me "
                         "an API key (`/wargear apikey`)."
                     )
-                await plain(f"Game #{gameid} {'tracked' if verb == 'track' else 'untracked'}.")
+                game = await store.game_state(gameid)
+                label = f"*<{settings.game_url(gameid)}|{game.name if game else gameid}>*"
+                if watch:
+                    await announce(client, f"👁️ <@{user}> asked me to watch {label}. DEFCON reminders resume.")
+                else:
+                    await announce(
+                        client,
+                        f"🔕 <@{user}> unwatched {label}. I'll stay quiet about it. "
+                        f"`/wargear watch {gameid}` to resume.",
+                    )
+                await plain("Done.")
 
             case "link":
                 if not is_admin(user):
@@ -188,13 +209,67 @@ def register(app: AsyncApp, deps: Deps) -> None:
                 await refresh_tz(client, ref.group(1))
                 await plain(f"Linked *{name}* → <@{ref.group(1)}>.")
 
+            case "notme" | "not-me" | "wrong":
+                name = await store.release_name(user)
+                if not name:
+                    return await plain("You're not linked to a WarGear name.")
+                await announce(
+                    client,
+                    f"↩️ <@{user}> says they're not *{name}* on WarGear. I'll ask around again. "
+                    "If that's you, press the button when it shows up.",
+                )
+                await plain(
+                    f"Unlinked you from *{name}*. Your API key and hours are kept. "
+                    "`/wargear register <your real name>` to fix it."
+                )
+
             case "unlink":
                 target = USER_REF.search(rest)
-                target_id = target.group(1) if target else user
+                if target:
+                    target_id = target.group(1)
+                elif rest:  # admins can unlink by WarGear name too
+                    p = await store.player_by_name(rest.strip("`*\"' "))
+                    if not p:
+                        return await plain(f"Nobody is linked to *{rest}*.")
+                    target_id = p.slack_id
+                else:
+                    target_id = user
                 if target_id != user and not is_admin(user):
+                    return await plain("ACCESS DENIED. Only admins can unlink someone else.")
+                name = await store.unlink(target_id)
+                if target_id != user:
+                    await announce(
+                        client,
+                        f"✂️ <@{user}> unlinked <@{target_id}>" + (f" from *{name}*." if name else "."),
+                    )
+                await plain(f"<@{target_id}> unlinked; their API key and settings are deleted.")
+
+            case "timetest":
+                if not is_admin(user):
                     return await plain("ACCESS DENIED.")
-                await store.unlink(target_id)
-                await plain(f"<@{target_id}> unlinked and their API key deleted.")
+                p = await store.player(user)
+                if not p or not p.tz:
+                    await refresh_tz(client, user)
+                    p = await store.player(user)
+                tz = deps.notifier.tz_for(p.tz if p else None)
+                now = now_ts()
+                offsets = [
+                    ("Like the bug report (23h 55m)", 23 * 3600 + 55 * 60),
+                    ("In 2 hours", 2 * 3600),
+                    ("In 5 hours (crosses midnight Eastern late in the evening)", 5 * 3600),
+                    ("In 26 hours", 26 * 3600),
+                    ("In 3 days", 3 * 86400),
+                ]
+                if rest.strip().isdigit():
+                    offsets.insert(0, (f"Custom: in {rest.strip()} minutes", int(rest) * 60))
+                text_, blocks = m.time_diagnostic(now, tz, offsets)
+                await client.chat_postMessage(channel=command["channel_id"], text=text_, blocks=blocks)
+                log.info("timetest posted for %s (tz=%s)", user, tz.key)
+
+            case "admins":
+                if not settings.admin_ids:
+                    return await plain("No admins configured, so everyone is an admin. Set JOSHUA_ADMINS.")
+                await plain("Admins: " + ", ".join(f"<@{a}>" for a in sorted(settings.admin_ids)))
 
             case _:
                 await plain(f"{m.quip()} Try `/wargear help`.")
@@ -259,6 +334,28 @@ def register(app: AsyncApp, deps: Deps) -> None:
         await client.chat_update(
             channel=body["channel"]["id"], ts=body["message"]["ts"], text=text, blocks=blocks
         )
+
+    @app.action("undo_claim")
+    async def undo_claim(ack, body, action, client):
+        await ack()
+        user = body["user"]["id"]
+        name = action["value"]
+        owner = await store.player_by_name(name)
+        if not owner:
+            return
+        if owner.slack_id != user and not is_admin(user):
+            return await _ephemeral(client, settings, user, "Only that person or an admin can undo this.")
+        await store.release_name(owner.slack_id)
+        channel, ts = body["channel"]["id"], body["message"]["ts"]
+        gameids = await store.games_for_player(name)
+        game = await store.game_state(min(gameids)) if gameids else None
+        if game is None:
+            line = f"↩️ *{name}* is unclaimed again."
+            await client.chat_update(channel=channel, ts=ts, text=line, blocks=[])
+            return
+        text, blocks = m.identity_prompt(name, game.name, settings.game_url(game.gameid))
+        await client.chat_update(channel=channel, ts=ts, text=text, blocks=blocks)
+        await store.record_identity_prompt(name, channel, ts)
 
     @app.action(re.compile(r"^open_"))
     async def link_clicked(ack):

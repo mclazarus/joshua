@@ -33,6 +33,9 @@ are still open. Named for the WOPR in *WarGames* (1983).
 /wargear hours 08:00-22:00 # optional; uses your Slack timezone
 ```
 Players who haven't registered get a "That's me" button the first time they show up in a game.
+If someone claims the wrong name, they can use `/wargear notme` or the "Oops, not me" button.
+An admin (`JOSHUA_ADMINS`, comma-separated) can `/wargear unlink @user`. To silence a game, use
+`/wargear unwatch <id>`; `/wargear watch <id>` turns it back on.
 
 ## Development
 ```

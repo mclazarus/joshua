@@ -170,6 +170,7 @@ class Notifier:
             turn.started_at,
             turn.deadline,
             now,
+            self.tz_for(turn.tz),
         )
         log.info("reminder %s: %s / %s", send.kind, turn.game_name, turn.player)
         await self.poster.post(text, blocks)
@@ -194,6 +195,9 @@ class Notifier:
 
             if game is None:
                 await done("game missing")
+                continue
+            if not await self.store.is_tracked(gameid):
+                await done("game unwatched")
                 continue
             who = [await self.who(w) for w in winners]
             if kind == FOLLOWUP:

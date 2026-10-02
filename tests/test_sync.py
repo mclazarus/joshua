@@ -128,3 +128,40 @@ async def test_tracking_needs_two_registered_players(store):
     [turn] = await store.open_turns()
     assert (turn.player, turn.slack_id) == ("Falken", "U1")
     assert await store.unmapped_names() == [("McKittrick", 42)]
+
+
+async def test_notme_releases_name_keeps_key_and_reopens_prompt(store):
+    await apply(store, game(), T0, "U1")
+    await store.link("U1", "Falken")
+    await store.link("U2", "Lightman")
+    await store.link("U3", "McKittrick")  # keeps the game tracked after Falken is released
+    await store.set_api_key("U1", b"sealed", True)
+    await store.record_identity_prompt("Falken", "C1", "1.0")
+    assert await store.release_name("U1") == "Falken"
+    p = await store.player("U1")
+    assert p.wargear_name is None and p.enc_api_key == b"sealed"
+    assert ("Falken", 42) in await store.unmapped_names()  # will be asked about again
+    await store.link("U4", "Falken")  # and someone else can claim it
+
+
+async def test_unlink_forgets_everything_and_reopens_prompt(store):
+    await apply(store, game(), T0, "U1")
+    await store.link("U1", "Falken")
+    await store.link("U2", "Lightman")
+    await store.link("U3", "McKittrick")
+    await store.record_identity_prompt("Falken", "C1", "1.0")
+    assert await store.unlink("U1") == "Falken"
+    assert await store.player("U1") is None
+    assert ("Falken", 42) in await store.unmapped_names()
+
+
+async def test_unwatch_silences_and_is_listed(store):
+    await apply(store, game(), T0, "U1")
+    await store.link("U1", "Falken")
+    await store.link("U2", "Lightman")
+    assert await store.open_turns()
+    await store.set_tracked(42, False)
+    assert await store.open_turns() == []
+    assert await store.unwatched_games() == [(42, "Global Thermonuclear War")]
+    await store.set_tracked(42, True)
+    assert await store.unwatched_games() == []

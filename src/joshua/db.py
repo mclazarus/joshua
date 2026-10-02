@@ -143,8 +143,30 @@ class Store:
         )
         await self.db.commit()
 
-    async def unlink(self, slack_id: str) -> None:
+    async def unlink(self, slack_id: str) -> str | None:
+        """Forget a Slack user entirely (mapping, API key, preferences). Returns their old name."""
+        p = await self.player(slack_id)
         await self.db.execute("DELETE FROM players WHERE slack_id = ?", (slack_id,))
+        await self.db.commit()
+        if p and p.wargear_name:
+            await self.forget_identity_prompt(p.wargear_name)
+        return p.wargear_name if p else None
+
+    async def release_name(self, slack_id: str) -> str | None:
+        """ "That's not me": drop the WarGear name but keep the key and preferences.
+        The name goes back in the "who is this?" queue. Returns the released name."""
+        p = await self.player(slack_id)
+        if not p or not p.wargear_name:
+            return None
+        await self.db.execute(
+            "UPDATE players SET wargear_name = NULL, updated_at = ? WHERE slack_id = ?", (now_ts(), slack_id)
+        )
+        await self.db.commit()
+        await self.forget_identity_prompt(p.wargear_name)
+        return p.wargear_name
+
+    async def forget_identity_prompt(self, wargear_name: str) -> None:
+        await self.db.execute("DELETE FROM identity_prompts WHERE wargear_name = ?", (wargear_name,))
         await self.db.commit()
 
     async def set_api_key(self, slack_id: str, sealed: bytes | None, ok: bool | None) -> None:
@@ -282,6 +304,13 @@ class Store:
         )
         return [s for (gid,) in await cur.fetchall() if (s := await self.game_state(gid))]
 
+    async def unwatched_games(self) -> list[tuple[int, str]]:
+        """Live games someone explicitly unwatched."""
+        cur = await self.db.execute(
+            "SELECT gameid, name FROM games WHERE tracked = 0 AND finished = 0 ORDER BY gameid"
+        )
+        return [(r[0], r[1]) for r in await cur.fetchall()]
+
     async def is_tracked(self, gameid: int) -> bool:
         cur = await self.db.execute(
             f"SELECT 1 FROM games g WHERE g.gameid = ? AND ({self._TRACKED})", (gameid,)
@@ -364,10 +393,14 @@ class Store:
     async def open_turns(self, *, tracked_only: bool = True) -> list[OpenTurn]:
         where = f"AND ({self._TRACKED})" if tracked_only else ""
         cur = await self.db.execute(
+            # Timezone: the player's own. If they're unregistered (or their tz is unknown),
+            # borrow it from whoever's API key we saw the game through; the caller falls back
+            # to DEFAULT_TZ (Eastern) after that.
             f"""SELECT t.gameid, g.name AS game_name, t.player, t.turnstamp, t.started_at, t.deadline,
-                       p.slack_id, p.tz, p.loud_hours
+                       p.slack_id, COALESCE(p.tz, via.tz) AS tz, p.loud_hours
                 FROM turns t JOIN games g ON g.gameid = t.gameid
                 LEFT JOIN players p ON p.wargear_name = t.player
+                LEFT JOIN players via ON via.slack_id = g.seen_via
                 WHERE t.ended_at IS NULL AND g.finished = 0 {where}
                 ORDER BY t.deadline"""
         )

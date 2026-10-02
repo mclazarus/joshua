@@ -9,6 +9,8 @@ from __future__ import annotations
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from joshua.reminders import LAST_CALL, START, T5, T30
 
@@ -41,9 +43,39 @@ class Who:
         return f"<@{self.slack_id}>" if self.slack_id else f"*{self.wargear_name}*"
 
 
-def slack_time(ts: int, fmt: str = "{date_short_pretty} at {time}") -> str:
-    """A timestamp Slack renders in each *viewer's* own timezone."""
-    return f"<!date^{ts}^{fmt}|{ts}>"
+EASTERN = ZoneInfo("America/New_York")
+
+
+def when_token(ts: int, tz: ZoneInfo, now: int) -> str:
+    """A deadline Slack renders live in each viewer's timezone: "Tomorrow at 9:38 AM (In 24 hours)".
+
+    Slack re-evaluates both halves whenever the message is *viewed*, so a reminder read the
+    next morning still reads correctly. (Verified with /wargear timetest on 2026-10-02.)
+    Server-written text like "tomorrow" or "in 23h 55m" goes stale. The fallback, for
+    clients that can't render tokens, is the server-side text in the player's timezone.
+    """
+    return f"<!date^{ts}^{{date_short_pretty}} at {{time}} ({{ago}})|{local_when(ts, tz, now)}>"
+
+
+def local_when(ts: int, tz: ZoneInfo, now: int) -> str:
+    """'today at 9:14 PM EDT', 'tomorrow at …', 'Sunday at …', or 'Oct 12 at …', in ``tz``.
+
+    Only correct as of ``now``. Used as the ``when_token`` fallback and by /wargear timetest.
+    """
+    when = datetime.fromtimestamp(ts, tz)
+    days = (when.date() - datetime.fromtimestamp(now, tz).date()).days
+    if days == 0:
+        day = "today"
+    elif days == 1:
+        day = "tomorrow"
+    elif days == -1:
+        day = "yesterday"
+    elif 1 < days < 7:
+        day = when.strftime("%A")
+    else:
+        day = f"{when:%b} {when.day}"
+    hour = when.hour % 12 or 12
+    return f"{day} at {hour}:{when:%M} {when:%p} {when.tzname()}"
 
 
 def ago(seconds: float) -> str:
@@ -92,14 +124,59 @@ def _link_button(text: str, url: str, style: str | None = None, action_id: str =
     return button
 
 
-def deadline_line(deadline: int | None, now: int) -> str:
+# Every Slack <!date> format token, for /wargear timetest.
+SLACK_DATE_FORMATS = [
+    "{date_short_pretty} at {time}",
+    "{date_pretty} at {time}",
+    "{date_long_pretty} at {time}",
+    "{day_divider_pretty}",
+    "{date_short} at {time}",
+    "{date} at {time}",
+    "{date_long} at {time}",
+    "{date_num} {time_secs}",
+    "{ago}",
+    "{date_short_pretty} at {time} ({ago})",
+]
+
+
+def time_diagnostic(now: int, tz: ZoneInfo, offsets: Sequence[tuple[str, int]]) -> Message:
+    """One deadline per section, rendered every way we could render it."""
+    utc = ZoneInfo("UTC")
+    blocks: list[dict] = [
+        _section(
+            "*🧪 TIME TEST.* Each block shows one deadline rendered every way we could.\n"
+            f"Server now: `{datetime.fromtimestamp(now, utc):%Y-%m-%d %H:%M:%S} UTC` · "
+            f"your Slack tz as I know it: `{tz.key}`\n"
+            "Raw tokens render in *your* Slack timezone. Server lines are computed by the bot."
+        )
+    ]
+    for label, offset in offsets:
+        ts = now + offset
+        utc_text = f"{datetime.fromtimestamp(ts, utc):%a %Y-%m-%d %H:%M} UTC"
+        lines = [f"*{label}*: in {ago(offset)} · epoch `{ts}` · `{utc_text}`"]
+        lines += [f"`{fmt}` → <!date^{ts}^{fmt}|fallback {ts}>" for fmt in SLACK_DATE_FORMATS]
+        lines.append(f"`server, your tz` → {local_when(ts, tz, now)}")
+        lines.append(f"`server, Eastern` → {local_when(ts, EASTERN, now)}")
+        blocks.append({"type": "divider"})
+        blocks.append(_section("\n".join(lines)))
+    return "Time rendering test", blocks
+
+
+def deadline_line(deadline: int | None, now: int, tz: ZoneInfo = EASTERN) -> str:
     if not deadline:
         return "No boot timer on this game. It will wait forever, but your opponents won't."
-    return f"WarGear skips you {slack_time(deadline)} (*in {ago(deadline - now)}*)."
+    return f"WarGear skips you *{when_token(deadline, tz, now)}*."
 
 
 def turn_reminder(
-    kind: str, who: Who, game: str, url: str, started_at: int, deadline: int | None, now: int
+    kind: str,
+    who: Who,
+    game: str,
+    url: str,
+    started_at: int,
+    deadline: int | None,
+    now: int,
+    tz: ZoneInfo = EASTERN,
 ) -> Message:
     remaining = deadline - now if deadline else None
     level = defcon(kind, remaining)
@@ -120,7 +197,7 @@ def turn_reminder(
             line = f"{who}, it's still your turn in *{game}*."
     text = f"DEFCON {level}: {line}"
     blocks = [
-        _section(f"{banner}  {line}\n{deadline_line(deadline, now)}"),
+        _section(f"{banner}  {line}\n{deadline_line(deadline, now, tz)}"),
         {
             "type": "actions",
             "elements": [_link_button("Take your turn", url, "danger" if level <= 2 else "primary")],
@@ -233,7 +310,20 @@ def identity_prompt(wargear_name: str, game: str, url: str) -> Message:
 
 def identity_claimed(wargear_name: str, slack_id: str) -> Message:
     line = f"✅ *{wargear_name}* identified as <@{slack_id}>. GREETINGS."
-    return line, [_section(line)]
+    return line, [
+        _section(line),
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Oops, not me"},
+                    "action_id": "undo_claim",
+                    "value": wargear_name,
+                }
+            ],
+        },
+    ]
 
 
 @dataclass(frozen=True)
@@ -241,11 +331,19 @@ class GameRow:
     gameid: int
     name: str
     url: str
-    waiting_on: Sequence[tuple[Who, int, int | None]]  # who, turn started, deadline
+    waiting_on: Sequence[tuple[Who, int, int | None, ZoneInfo]]  # who, turn started, deadline, their tz
     started: int | None
     players: Sequence[str]
     open: bool = False
     spots_left: int | None = None
+
+
+def _idle_line(r: GameRow) -> str:
+    if r.open and r.spots_left:
+        return f"• open for sign-ups: {r.spots_left} seat{'s' if r.spots_left != 1 else ''} left"
+    if r.open:
+        return "• open for sign-ups"
+    return "• nobody's turn right now"
 
 
 def games_overview(rows: Sequence[GameRow], now: int) -> Message:
@@ -258,14 +356,11 @@ def games_overview(rows: Sequence[GameRow], now: int) -> Message:
             age = "🕐 waiting for players to join"
         else:
             age = f"running {ago(now - r.started)}" if r.started else "not started yet"
-        waits = (
-            "\n".join(
-                f"• waiting on {who} for {ago(now - since)}"
-                + (f", skips {slack_time(dl, '{time}')} (in {ago(dl - now)})" if dl else "")
-                for who, since, dl in r.waiting_on
-            )
-            or "• nobody's turn right now"
-        )
+        waits = "\n".join(
+            f"• waiting on {who} for {ago(now - since)}"
+            + (f", skips {when_token(dl, tz, now)}" if dl else "")
+            for who, since, dl, tz in r.waiting_on
+        ) or _idle_line(r)
         blocks.append({"type": "divider"})
         blocks.append(_section(f"*<{r.url}|{r.name}>*  ·  #{r.gameid}  ·  {age}\n{waits}"))
         blocks.append(_context("Players: " + ", ".join(r.players)))
@@ -278,10 +373,10 @@ def my_turns(rows: Sequence[GameRow], now: int) -> Message:
         return line, [_section(line)]
     lines = []
     for r in rows:
-        _, since, dl = r.waiting_on[0]
+        _, since, dl, tz = r.waiting_on[0]
         lines.append(
             f"• <{r.url}|{r.name}>: yours for {ago(now - since)}"
-            + (f", skips in *{ago(dl - now)}*" if dl else "")
+            + (f", skips *{when_token(dl, tz, now)}*" if dl else "")
         )
     return "Your turns", [_section("*Waiting on you:*\n" + "\n".join(lines))]
 
@@ -304,8 +399,11 @@ I'm Joshua. I watch our WarGear games and wake you up when it's your move.
 `/wargear game <id>`: one game in detail
 `/wargear me`: what's waiting on you
 `/wargear who`: who's who
-`/wargear track <id|url>` / `untrack <id>`: force a game on or off
-`/wargear link @user <name>` / `unlink @user`: (admins) fix a mapping
+`/wargear unwatch <id|url>`: stop all reminders for a game  ·  `watch <id>` to resume
+`/wargear notme`: "that's not me": drops your WarGear name, keeps your key
+`/wargear unlink`: forget me entirely (name, key, settings)
+`/wargear link @user <name>` / `unlink @user|<name>`: (admins) fix someone's mapping
+`/wargear admins`: who can do that
 
 You can also @mention me: _"whose turn is it?"_, _"what games are running?"_"""
 

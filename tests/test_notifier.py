@@ -189,3 +189,34 @@ async def test_signup_nag_stops_when_full_old_or_started(env):
     await apply(store, game(gameid=52, turnstamp=now), now + 60, "U1")
     assert await n._signup_tick(now + 60) == 0
     assert rec.posts == []
+
+
+async def test_unwatched_game_drops_pending_winner_nags(env):
+    store, n, rec = env
+    now = ts(2026, 10, 7, 12)
+    await apply(store, game(turnstamp=T_START, current=("Lightman",)), now - 100, "U1")
+    done = game(current=(), status="Finished", winners=("Lightman",), endstamp=now, turnstamp=now)
+    await n.handle_events(await apply(store, done, now, "U1"), now)
+    await store.set_tracked(42, False)
+    rec.posts.clear()
+    assert await n._winner_tick(now + 30 * 3600) == 0
+    assert rec.posts == []
+
+
+async def test_timezone_falls_back_to_key_owner_then_eastern(env):
+    store, n, rec = env
+    await store.link("U3", "McKittrick")
+    await store.set_tz("U2", "America/Los_Angeles")  # Lightman: the key we saw the game through
+    # McKittrick is registered but has no tz yet; Falken (U1) is Eastern.
+    await apply(store, game(turnstamp=T_START, current=("McKittrick",)), T_START, "U2")
+    [turn] = await store.open_turns()
+    assert turn.tz == "America/Los_Angeles"
+    # Unregistered player, game seen via U2's key: still Lightman's tz.
+    await store.unlink("U3")
+    await store.link("U4", "Beringer")  # keep the game tracked with 2+ registered players
+    [turn] = await store.open_turns()
+    assert (turn.slack_id, turn.tz) == (None, "America/Los_Angeles")
+    # Key owner has no tz either: Eastern.
+    await store.set_tz("U2", None)
+    [turn] = await store.open_turns()
+    assert n.tz_for(turn.tz).key == "America/New_York"

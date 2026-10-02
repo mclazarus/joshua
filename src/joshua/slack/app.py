@@ -75,6 +75,8 @@ async def run(settings: Settings) -> None:
     poller = Poller(store, wg, keybox, settings, on_events=notifier.handle_events)
     commands.register(app, commands.Deps(store, wg, keybox, poller, notifier, settings))
 
+    if not settings.admin_ids:
+        log.warning("JOSHUA_ADMINS is empty: every Slack user can run admin commands")
     handler = AsyncSocketModeHandler(app, settings.slack_app_token)
     await handler.connect_async()
     log.info("WOPR online. SHALL WE PLAY A GAME?")

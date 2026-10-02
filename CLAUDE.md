@@ -59,6 +59,10 @@ returns, which differs from its own Swagger spec.
   - Never print them or write them to fixtures.
 - All user-facing copy lives in `slack/messages.py` and stays in the WOPR voice: "SHALL WE PLAY
   A GAME?", DEFCON 5 for turn start down to DEFCON 1 at T-5, "A STRANGE GAME."
+- Show deadlines with `messages.when_token()`. It produces a Slack `<!date^ts^{date_short_pretty} at {time} ({ago})|fallback>`
+  token, which Slack renders live in each viewer's timezone. Text the server writes ("tomorrow",
+  "in 23h") goes stale once the message has been posted (proven with `/wargear timetest`,
+  2026-10-02). The player's timezone still decides quiet hours and the fallback text.
 - Don't link WarGear's rematch feature. The group finds it unreliable, so winner nags link to
   `/games/create`.
 - Schema changes go in a new migration file once anything is deployed. (`001` was edited before
@@ -80,6 +84,16 @@ returns, which differs from its own Swagger spec.
   - every 12h during default loud hours, pinging invitees who haven't joined;
   - stops when the seats (`num_players`) are full. The group invites 6–7 people to 5-seat games,
     first come first served.
+- **Identity and admin:**
+  - `JOSHUA_ADMINS` is a comma-separated list of Slack IDs. If it's empty, everyone is an admin
+    and the bot logs a warning.
+  - `/wargear notme` (or the "Oops, not me" button) drops your WarGear name but keeps your key
+    and hours, and puts the name back in the "who is this?" queue.
+  - `/wargear unlink` deletes everything. Admins can unlink someone else by @mention or by
+    WarGear name.
+- **Watching games:** anyone can `/wargear unwatch <id>`, which silences reminders, sign-up nags
+  and winner nags for that game. `/wargear watch <id>` turns it back on. Both are announced in
+  the channel, and `/wargear games` lists unwatched games.
 - **Game type:** the group always plays turn-based games. Simultaneous games are handled but
   less tested.
 
