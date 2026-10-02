@@ -416,13 +416,23 @@ class Store:
         return {(r[0], r[1]) for r in await cur.fetchall()}
 
     async def record_reminder(
-        self, gameid: int, player: str, turnstamp: int, kind: str, due_at: int, posted: bool
+        self, gameid: int, player: str, turnstamp: int, kind: str, due_at: int, posted: bool, at: int
     ) -> None:
         await self.db.execute(
             "INSERT OR IGNORE INTO reminders_sent VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (gameid, player, turnstamp, kind, due_at, now_ts(), int(posted)),
+            (gameid, player, turnstamp, kind, due_at, at, int(posted)),
         )
         await self.db.commit()
+
+    async def last_posted(self, gameid: int, player: str, turnstamp: int) -> int | None:
+        """When we last actually posted a reminder for this turn."""
+        cur = await self.db.execute(
+            "SELECT MAX(sent_at) FROM reminders_sent"
+            " WHERE gameid = ? AND player = ? AND turnstamp = ? AND posted = 1",
+            (gameid, player, turnstamp),
+        )
+        row = await cur.fetchone()
+        return row[0] if row else None
 
     # --- winner nags -----------------------------------------------------
 

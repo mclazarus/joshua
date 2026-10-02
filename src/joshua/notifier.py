@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from joshua.config import Settings, parse_hours
 from joshua.db import OpenTurn, Store, now_ts
 from joshua.reminders import (
+    T5,
+    T30,
     Cadence,
     LoudHours,
     Reminder,
@@ -151,16 +153,31 @@ class Notifier:
 
     async def _turn_tick(self, turn: OpenTurn, now: int) -> int:
         plan = self.plan_for(turn)
-        sent_keys = await self.store.reminders_sent(turn.gameid, turn.player, turn.turnstamp)
+        key = (turn.gameid, turn.player, turn.turnstamp)
+        sent_keys = await self.store.reminders_sent(*key)
         already = {r for r in plan if (r.kind, int(r.when.timestamp())) in sent_keys}
         send, skip = due_now(plan, already, _utc(now), _utc(turn.deadline) if turn.deadline else None)
         for r in skip:
             log.info("skipping stale reminder %s for %s / %s (catch-up)", r.kind, turn.game_name, turn.player)
-            await self.store.record_reminder(
-                turn.gameid, turn.player, turn.turnstamp, r.kind, int(r.when.timestamp()), posted=False
-            )
+            await self.store.record_reminder(*key, r.kind, int(r.when.timestamp()), posted=False, at=now)
         if send is None:
             return 0
+        if send.kind not in (T30, T5) and (last := await self.store.last_posted(*key)):
+            # The plan is recomputed every tick, so a change of hours or timezone mid-turn can
+            # surface an unsent slot that's "due". Don't ping again if it's older than the last
+            # ping or would come right on top of it. The final warnings always go out.
+            if send.when.timestamp() <= last or now - last < self.cadence.min_gap.total_seconds():
+                log.info(
+                    "holding %s for %s / %s: pinged %ss ago",
+                    send.kind,
+                    turn.game_name,
+                    turn.player,
+                    now - last,
+                )
+                await self.store.record_reminder(
+                    *key, send.kind, int(send.when.timestamp()), posted=False, at=now
+                )
+                return 0
         who = m.Who(turn.player, turn.slack_id)
         text, blocks = m.turn_reminder(
             send.kind,
@@ -174,9 +191,7 @@ class Notifier:
         )
         log.info("reminder %s: %s / %s", send.kind, turn.game_name, turn.player)
         await self.poster.post(text, blocks)
-        await self.store.record_reminder(
-            turn.gameid, turn.player, turn.turnstamp, send.kind, int(send.when.timestamp()), posted=True
-        )
+        await self.store.record_reminder(*key, send.kind, int(send.when.timestamp()), posted=True, at=now)
         return 1
 
     async def _winner_tick(self, now: int) -> int:
