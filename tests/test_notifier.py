@@ -348,3 +348,93 @@ async def test_after_action_report_waits_for_winner_post(env):
     assert "*Falken* eliminated *Lightman*" in report
     assert "<@" not in report  # names, not pings
     assert await n._report_tick(now + 60) == 0
+
+
+async def test_unwatched_game_gets_no_report(env):
+    store, n, rec = env
+    now = ts(2026, 10, 7, 12)
+    await apply(store, game(current=()), now - 100, "U1")
+    done = game(current=(), status="Finished", winners=("Falken",), endstamp=now)
+    await n.handle_events(await apply(store, done, now, "U1"), now)
+    await n._winner_tick(now)
+    await store.queue_history(42, now)
+    await store.save_history(42, {"history": {"turn": []}}, now)
+    await store.set_tracked(42, False)
+    assert await n._report_tick(now) == 0
+
+
+async def test_unwatched_game_drops_pending_winner_nags(env):
+    store, n, rec = env
+    now = ts(2026, 10, 7, 12)
+    await apply(store, game(turnstamp=T_START, current=("Lightman",)), now - 100, "U1")
+    done = game(current=(), status="Finished", winners=("Lightman",), endstamp=now, turnstamp=now)
+    await n.handle_events(await apply(store, done, now, "U1"), now)
+    await store.set_tracked(42, False)
+    rec.posts.clear()
+    assert await n._winner_tick(now + 30 * 3600) == 0
+    assert rec.posts == []
+
+
+async def test_timezone_falls_back_to_key_owner_then_eastern(env):
+    store, n, rec = env
+    await store.link("U3", "McKittrick")
+    await store.set_tz("U2", "America/Los_Angeles")  # Lightman: the key we saw the game through
+    # McKittrick is registered but has no tz yet; Falken (U1) is Eastern.
+    await apply(store, game(turnstamp=T_START, current=("McKittrick",)), T_START, "U2")
+    [turn] = await store.open_turns()
+    assert turn.tz == "America/Los_Angeles"
+    # Unregistered player, game seen via U2's key: still Lightman's tz.
+    await store.unlink("U3")
+    await store.link("U4", "Beringer")  # keep the game tracked with 2+ registered players
+    [turn] = await store.open_turns()
+    assert (turn.slack_id, turn.tz) == (None, "America/Los_Angeles")
+    # Key owner has no tz either: Eastern.
+    await store.set_tz("U2", None)
+    [turn] = await store.open_turns()
+    assert n.tz_for(turn.tz).key == "America/New_York"
+
+
+async def test_schedule_change_mid_turn_does_not_double_post(env):
+    store, n, rec = env
+    start = ts(2026, 10, 7, 6, 30)  # quiet hours: first ping waits for 08:00
+    await apply(store, game(turnstamp=start), start, "U1")
+    assert await n.remind(ts(2026, 10, 7, 8, 0)) == 1
+    assert await n.remind(ts(2026, 10, 7, 12, 0)) == 1
+    # At 12:30 Falken widens their loud hours. The new plan has an unsent 11:00 nag
+    # (07:00 + 4h) that is "due", but they were pinged 30 minutes ago.
+    await store.set_loud_hours("U1", "07:00-23:00")
+    assert await n.remind(ts(2026, 10, 7, 12, 30)) == 0
+    # The schedule carries on normally: next nag at 15:00 on the new chain.
+    assert await n.remind(ts(2026, 10, 7, 15, 1)) == 1
+
+
+async def test_final_warnings_ignore_the_minimum_gap(env):
+    store, n, rec = env
+    start = ts(2026, 10, 7, 9)
+    await apply(store, game(turnstamp=start), start, "U1")
+    deadline = start + 86400
+    await n.remind(deadline - 31 * 60)  # some reminder just went out
+    rec.posts.clear()
+    assert await n.remind(deadline - 30 * 60 + 1) == 1
+    assert "30 MINUTES" in rec.posts[0]
+
+
+async def test_restart_from_disk_does_not_repost(tmp_path):
+    path = str(tmp_path / "joshua.db")
+    settings = Settings(slack_channel_id="C1", default_tz="America/New_York")
+    store = await Store.open(path)
+    await store.link("U1", "Falken")
+    await store.link("U2", "Lightman")
+    await apply(store, game(turnstamp=T_START), T_START, "U1")
+    rec = Recorder()
+    assert await Notifier(store, rec, settings).remind(T_START + 60) == 1
+    await store.close()
+
+    # Container restarts: new process, same /data volume.
+    store = await Store.open(path)
+    rec2 = Recorder()
+    n2 = Notifier(store, rec2, settings)
+    assert await n2.remind(T_START + 120) == 0
+    assert await n2.remind(ts(2026, 10, 7, 13, 1)) == 1  # the 13:00 nag, once
+    assert await n2.remind(ts(2026, 10, 7, 13, 2)) == 0
+    await store.close()

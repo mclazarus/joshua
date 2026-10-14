@@ -38,6 +38,9 @@ Named for the WOPR in *WarGames* (1983).
 /wargear changelog [build] # what changed in this build, or an earlier one
 ```
 Players who haven't registered get a "That's me" button the first time they show up in a game.
+If someone claims the wrong name, they can use `/wargear notme` or the "Oops, not me" button.
+An admin (`JOSHUA_ADMINS`, comma-separated) can `/wargear unlink @user`. To silence a game, use
+`/wargear unwatch <id>`; `/wargear watch <id>` turns it back on.
 Registered players without an API key get an "Add my API key" button on posts that mention
 them, at most once a week.
 

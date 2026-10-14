@@ -170,8 +170,30 @@ class Store:
         )
         await self.db.commit()
 
-    async def unlink(self, slack_id: str) -> None:
+    async def unlink(self, slack_id: str) -> str | None:
+        """Forget a Slack user entirely (mapping, API key, preferences). Returns their old name."""
+        p = await self.player(slack_id)
         await self.db.execute("DELETE FROM players WHERE slack_id = ?", (slack_id,))
+        await self.db.commit()
+        if p and p.wargear_name:
+            await self.forget_identity_prompt(p.wargear_name)
+        return p.wargear_name if p else None
+
+    async def release_name(self, slack_id: str) -> str | None:
+        """ "That's not me": drop the WarGear name but keep the key and preferences.
+        The name goes back in the "who is this?" queue. Returns the released name."""
+        p = await self.player(slack_id)
+        if not p or not p.wargear_name:
+            return None
+        await self.db.execute(
+            "UPDATE players SET wargear_name = NULL, updated_at = ? WHERE slack_id = ?", (now_ts(), slack_id)
+        )
+        await self.db.commit()
+        await self.forget_identity_prompt(p.wargear_name)
+        return p.wargear_name
+
+    async def forget_identity_prompt(self, wargear_name: str) -> None:
+        await self.db.execute("DELETE FROM identity_prompts WHERE wargear_name = ?", (wargear_name,))
         await self.db.commit()
 
     async def set_api_key(self, slack_id: str, sealed: bytes | None, ok: bool | None) -> None:
@@ -315,6 +337,13 @@ class Store:
         )
         return [s for (gid,) in await cur.fetchall() if (s := await self.game_state(gid))]
 
+    async def unwatched_games(self) -> list[tuple[int, str]]:
+        """Live games someone explicitly unwatched."""
+        cur = await self.db.execute(
+            "SELECT gameid, name FROM games WHERE tracked = 0 AND finished = 0 ORDER BY gameid"
+        )
+        return [(r[0], r[1]) for r in await cur.fetchall()]
+
     async def is_tracked(self, gameid: int) -> bool:
         cur = await self.db.execute(
             f"SELECT 1 FROM games g WHERE g.gameid = ? AND ({self._TRACKED})", (gameid,)
@@ -397,11 +426,15 @@ class Store:
     async def open_turns(self, *, tracked_only: bool = True) -> list[OpenTurn]:
         where = f"AND ({self._TRACKED})" if tracked_only else ""
         cur = await self.db.execute(
+            # Timezone: the player's own. If they're unregistered (or their tz is unknown),
+            # borrow it from whoever's API key we saw the game through; the caller falls back
+            # to DEFAULT_TZ (Eastern) after that.
             f"""SELECT t.gameid, g.name AS game_name, t.player, t.turnstamp, t.started_at, t.deadline,
-                       p.slack_id, p.tz, p.loud_hours,
+                       p.slack_id, COALESCE(p.tz, via.tz) AS tz, p.loud_hours,
                        COALESCE(p.enc_api_key IS NOT NULL AND COALESCE(p.key_ok, 1) != 0, 1) AS has_key
                 FROM turns t JOIN games g ON g.gameid = t.gameid
                 LEFT JOIN players p ON p.wargear_name = t.player
+                LEFT JOIN players via ON via.slack_id = g.seen_via
                 WHERE t.ended_at IS NULL AND g.finished = 0 {where}
                 ORDER BY t.deadline"""
         )
@@ -417,13 +450,23 @@ class Store:
         return {(r[0], r[1]) for r in await cur.fetchall()}
 
     async def record_reminder(
-        self, gameid: int, player: str, turnstamp: int, kind: str, due_at: int, posted: bool
+        self, gameid: int, player: str, turnstamp: int, kind: str, due_at: int, posted: bool, at: int
     ) -> None:
         await self.db.execute(
             "INSERT OR IGNORE INTO reminders_sent VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (gameid, player, turnstamp, kind, due_at, now_ts(), int(posted)),
+            (gameid, player, turnstamp, kind, due_at, at, int(posted)),
         )
         await self.db.commit()
+
+    async def last_posted(self, gameid: int, player: str, turnstamp: int) -> int | None:
+        """When we last actually posted a reminder for this turn."""
+        cur = await self.db.execute(
+            "SELECT MAX(sent_at) FROM reminders_sent"
+            " WHERE gameid = ? AND player = ? AND turnstamp = ? AND posted = 1",
+            (gameid, player, turnstamp),
+        )
+        row = await cur.fetchone()
+        return row[0] if row else None
 
     # --- winner nags -----------------------------------------------------
 
@@ -549,10 +592,13 @@ class Store:
         await self.db.commit()
 
     async def reports_due(self) -> list[PendingReport]:
-        """Fetched histories not reported yet, once the game's first winner nag has gone out."""
+        """Fetched histories not reported yet, once the game's first winner nag has gone out.
+
+        Unwatched games get no report, like their winner nags.
+        """
         cur = await self.db.execute(
-            """SELECT h.gameid, h.body FROM game_history h
-               WHERE h.body IS NOT NULL AND h.report_posted_at IS NULL
+            f"""SELECT h.gameid, h.body FROM game_history h JOIN games g ON g.gameid = h.gameid
+               WHERE h.body IS NOT NULL AND h.report_posted_at IS NULL AND ({self._TRACKED})
                  AND NOT EXISTS (SELECT 1 FROM winner_nags w
                                  WHERE w.gameid = h.gameid AND w.kind = 'first' AND w.sent_at IS NULL)
                ORDER BY h.fetched_at"""

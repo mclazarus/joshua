@@ -7,6 +7,12 @@ heading gets the short commit hash: `## Build N · YYYY-MM-DD · abc1234`.
 ## Build 3 · 2026-10-14
 - `/wargear version` shows which build is running and its commit.
 - `/wargear changelog [build]` shows what changed in the current build or any earlier one.
+- `/wargear unwatch <id>` silences a game's reminders, nags and report; `/wargear watch <id>`
+  turns them back on. These replace `track`/`untrack`, which still work.
+- Claimed the wrong name? `/wargear notme` or the "Oops, not me" button undoes it.
+  `/wargear unlink` forgets you entirely, and `/wargear admins` lists who can fix mappings.
+- Deadlines show in each reader's own timezone, with a readable fallback.
+- No more double pings when someone changes their hours in the middle of a turn.
 
 ## Build 2 · 2026-10-14 · 261f490
 - Posts that mention a registered player with no API key offer an "Add my API key" button, at

@@ -47,11 +47,13 @@ class Cadence:
     final_warning: timedelta = timedelta(minutes=30)
     last_warning: timedelta = timedelta(minutes=5)
     last_call_before_quiet: timedelta = timedelta(minutes=30)
+    # Never send two ordinary reminders closer together than this (final warnings excepted).
+    min_gap: timedelta = timedelta(minutes=30)
 
     @classmethod
     def fast(cls) -> Cadence:
         """Hours become minutes and minutes become seconds, for sandbox testing."""
-        return cls(timedelta(minutes=4), timedelta(seconds=30), timedelta(seconds=5), timedelta(seconds=30))
+        return cls(timedelta(minutes=4), *(timedelta(seconds=x) for x in (30, 5, 30, 30)))
 
 
 DEFAULT_CADENCE = Cadence()
