@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from joshua.db import Record
+from joshua.release import Release
 from joshua.reminders import LAST_CALL, START, T5, T30
 from joshua.stats import NEUTRAL, GameStats
 
@@ -455,10 +456,43 @@ I'm Joshua. I watch our WarGear games and wake you up when it's your move.
 `/wargear me`: what's waiting on you
 `/wargear stats [board]`: win/loss/draw records, overall or for one board
 `/wargear who`: who's who
+`/wargear version`: which build I'm running
+`/wargear changelog [build]`: what changed in this build, or an earlier one
 `/wargear track <id|url>` / `untrack <id>`: force a game on or off
 `/wargear link @user <name>` / `unlink @user`: (admins) fix a mapping
 
 You can also @mention me: _"whose turn is it?"_, _"what games are running?"_"""
+
+
+def _build_line(r: Release, commit: str | None) -> str:
+    return f"*Build {r.build}* · {r.date}" + (f" · `{commit}`" if commit else "")
+
+
+def version_message(r: Release, commit: str | None) -> Message:
+    line = f"JOSHUA {_build_line(r, commit or 'dev')}. `/wargear changelog` for what's new."
+    return line, [_section(line)]
+
+
+def changelog_message(r: Release, commit: str | None, builds: Sequence[int]) -> Message:
+    # Unwrap the file's hard-wrapped bullets: Slack would keep every line break.
+    lines: list[str] = []
+    for n in r.notes.splitlines():
+        if n.startswith("- "):
+            lines.append("• " + n[2:])
+        elif n.strip() and lines and n.startswith(" "):
+            lines[-1] += " " + n.strip()
+        else:
+            lines.append(n)
+    notes = "\n".join(lines)
+    blocks = [_section(f"{_build_line(r, commit)}\n{notes}")]
+    others = [str(b) for b in builds if b != r.build]
+    if others:
+        blocks.append(_context("Earlier builds: `/wargear changelog <build>` · " + ", ".join(others)))
+    return f"Changelog for build {r.build}", blocks
+
+
+def unknown_build(build: str, builds: Sequence[int]) -> str:
+    return f"NO RECORD OF BUILD {build}. Builds on file: {', '.join(map(str, builds))}."
 
 
 def help_message() -> Message:

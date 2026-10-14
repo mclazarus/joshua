@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from slack_bolt.async_app import AsyncApp
 
+from joshua import release
 from joshua.config import Settings, parse_hours
 from joshua.crypto import KeyBox
 from joshua.db import NameTaken, Store, now_ts
@@ -179,6 +180,20 @@ def register(app: AsyncApp, deps: Deps) -> None:
                         return await plain(f"Which board? {', '.join(matches)}")
                     board = (exact or matches)[0]
                 await say(m.records_table(await store.records(board), board, boards))
+
+            case "version":
+                await say(m.version_message(release.current(), release.commit()))
+
+            case "changelog" | "changes" | "whatsnew":
+                builds = [r.build for r in release.releases()]
+                wanted = rest.lower().removeprefix("build").strip()
+                if not wanted:
+                    return await say(m.changelog_message(release.current(), release.commit(), builds))
+                r = release.find(int(wanted)) if wanted.isdigit() else None
+                if r is None:
+                    return await plain(m.unknown_build(wanted, builds))
+                commit = r.commit or (release.commit() if r == release.current() else None)
+                await say(m.changelog_message(r, commit, builds))
 
             case "who":
                 pairs = [(p.wargear_name, p.slack_id, p.tz) for p in await store.players() if p.wargear_name]

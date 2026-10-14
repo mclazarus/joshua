@@ -12,6 +12,7 @@ returns, which differs from its own Swagger spec.
 
 ## Commands
 - `uv run pytest -q`, `make lint`, `make fmt`. Ruff is set to line length 110.
+- `uv run joshua version` / `uv run joshua changelog [build]`: the running build and its notes.
 - `uv run joshua dry-run --me <wargear name>`: polls once against real WarGear, prints what it
   would post, posts nothing. It prompts for the API key.
 - `uv run joshua discover`: dumps raw API responses into `tests/fixtures/raw/` (gitignored). Then
@@ -106,6 +107,20 @@ returns, which differs from its own Swagger spec.
   - shown in `/wargear stats [board]` and as a footer on the first winner post.
 - **Game type:** the group always plays turn-based games. Simultaneous games are handled but
   less tested.
+
+## Releases
+- Every release is a **build number** that counts up by one. The changelog is
+  `src/joshua/CHANGELOG.md`, which ships inside the package so `/wargear version` and
+  `/wargear changelog [build]` can read it. The newest entry is the running build.
+- **Always update the changelog when releasing:**
+  - add `## Build N · YYYY-MM-DD` at the top, with short bullets in plain words about what
+    changed for the group;
+  - write the previous build's short commit hash into its heading
+    (`## Build N-1 · date · abc1234`). `tests/test_release.py` checks the numbers count up and
+    that every earlier build has a hash.
+- The running build's own commit comes from `src/joshua/_commit.txt`. `git archive` fills it in
+  through `export-subst` in `.gitattributes`. In a checkout it falls back to
+  `git rev-parse`, and a `make dev-up` image shows `dev`.
 
 ## Deployment
 Production will be a Raspberry Pi called **paradox**. Its infra repo hasn't been decided. Follow

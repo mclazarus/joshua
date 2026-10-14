@@ -34,6 +34,8 @@ Named for the WOPR in *WarGames* (1983).
 /wargear apikey            # opens a private modal
 /wargear hours 08:00-22:00 # optional; uses your Slack timezone
 /wargear stats [board]     # win/loss/draw records, overall or for one board
+/wargear version           # which build is running
+/wargear changelog [build] # what changed in this build, or an earlier one
 ```
 Players who haven't registered get a "That's me" button the first time they show up in a game.
 Registered players without an API key get an "Add my API key" button on posts that mention
@@ -54,3 +56,6 @@ cp .env.example .env && uv run joshua run
 The image builds for arm64 with `--target production`. It's compatible with
 `home-docks-infra/scripts/build-ship.sh`, and `compose.example.yaml` follows the same
 conventions. The bot's state lives in `/srv/joshua/data`.
+
+Each release is a numbered build. Add an entry to
+[src/joshua/CHANGELOG.md](src/joshua/CHANGELOG.md) before releasing; see CLAUDE.md for the format.

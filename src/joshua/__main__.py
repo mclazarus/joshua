@@ -1,4 +1,4 @@
-"""joshua: run | dry-run | discover | healthcheck | genkey"""
+"""joshua: run | dry-run | discover | healthcheck | genkey | version | changelog"""
 
 from __future__ import annotations
 
@@ -206,6 +206,22 @@ def cmd_dry_run(settings: Settings, args) -> None:
     asyncio.run(_dry_run(settings, args))
 
 
+def cmd_version(settings: Settings, args) -> None:
+    from joshua import release
+
+    r = release.current()
+    print(f"joshua build {r.build} ({r.date}, {release.commit() or 'unknown commit'})")
+
+
+def cmd_changelog(settings: Settings, args) -> None:
+    from joshua import release
+
+    r = release.find(args.build) if args.build else release.current()
+    if r is None:
+        sys.exit(f"No build {args.build}. Builds: {', '.join(str(x.build) for x in release.releases())}")
+    print(f"Build {r.build} · {r.date}" + (f" · {r.commit}" if r.commit else "") + "\n" + r.notes)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="joshua", description="SHALL WE PLAY A GAME?")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -219,6 +235,9 @@ def main() -> None:
     r = sub.add_parser("dry-run", help="poll once and print what would be posted")
     r.add_argument("--me", help="your WarGear name")
     r.add_argument("--report", type=int, help="also print the after-action report for this finished game")
+    sub.add_parser("version", help="print the build number and commit")
+    c = sub.add_parser("changelog", help="print the changelog for this build, or another one")
+    c.add_argument("build", type=int, nargs="?")
     args = parser.parse_args()
 
     # Anything we create (the DB with encrypted keys, its WAL files) is owner-only.
@@ -231,6 +250,8 @@ def main() -> None:
         "healthcheck": cmd_healthcheck,
         "discover": cmd_discover,
         "dry-run": cmd_dry_run,
+        "version": cmd_version,
+        "changelog": cmd_changelog,
     }[args.cmd](settings, args)
 
 
