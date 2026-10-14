@@ -14,7 +14,8 @@ and you can find it under Settings → Account → API Keys
 | `GET /GetGameList/my?viewselector=Finished[&pagenumber=N]` | Looked up when a game drops off the Live list, to get its winners |
 | `GET /GetGameList/player?player=<name>` | Returned `[]` in testing, so it isn't used. Every player needs their own key |
 | `GET /GetCurrentTurns` | Not used. Returns `[]` when it isn't your turn, and only covers the key owner |
-| `GET /GetHistoryUpdate/{gameid}` | Not used |
+| `GET /GetHistoryUpdate/{gameid}` | Once per won, tracked game, for the after-action report. See below |
+| `GET /GetBoardData/{boardid}` | Once per board ever: dice sides, territory names, and the board's fog level |
 
 ## Confirmed against real responses (2026-10-01)
 Sanitized copies are in `tests/fixtures/`. To regenerate them, run `joshua discover`, then
@@ -50,9 +51,50 @@ Sanitized copies are in `tests/fixtures/`. To regenerate them, run `joshua disco
 - **Errors come back as HTTP 200.** A bad key returns `{"status":"Error","message":"Invalid API Key"}`.
   So the client checks the body, and it treats any non-list response from GetGameList as an
   error rather than as "no games".
+- **`fog`:** `None`, `Light`, `Medium`, `Heavy`, `Board Default` or `""`. `Board Default`
+  means the board's rules decide (`rules.fog` from GetBoardData). Joshua treats anything it
+  can't resolve to `None` as fogged, and doesn't announce eliminations in fogged games.
+  `count_attacks`/`count_fortifies`/`turn_counter` stay visible under fog; `status`, `cards`
+  etc. show `"?"`.
 - **`msgstamps`, `visitstamps`:** dicts keyed by player name, or `false`.
 - **Finished list:** not sorted (15 games, from 2013 to 2026). `pagenumber` hasn't been tested
   yet. The poller walks up to 5 pages and stops at an empty page or one that repeats.
+
+## GetHistoryUpdate (confirmed 2026-10-13)
+The whole action log of a game, in one response (about 900KB for a 4-player, 66-turn game).
+It comes from XML, so every action is wrapped: `{"history": {"turn": [{"@attributes": {...}}]}}`.
+All values are strings, and `"0"` means unset. The fields are `turnid, timestamp, action, s`
+(the acting seat; `N` = neutral), `gp, tid, fromid, toid, count, seats, cards, bmod, country`,
+plus `ad, dd, al, dl` on attacks. `gp` holds player id hashes on `create_game`/`join_game` and
+`On`/`Off` on attacks. `country` is the actor's country: never commit it.
+
+The actions we use:
+- **`select`** `s`, `tid`: initial territory assignment. **`neutralise`** `tid` plus
+  **`place`** `s=N`: neutral territories. Scenario boards may skip `select`, so `place`,
+  `fortify` and attacks also fill in unknown owners.
+- **`attack`** `s, fromid, toid, ad, dd, bmod, al, dl`: **one roll**.
+  - `ad`/`dd` are the **faces rolled**, e.g. `"6,4,1"` vs `"5,3"`.
+  - Standard resolution: pair off the highest dice, ties go to the defender. All 1,775 rolls
+    in the sample matched.
+  - `bmod` is `"<attacker>,<defender>"` **extra die sides** from border modifiers. With `"2,0"`
+    the attacker's faces run 1–8 on a d6 board.
+- **`occupy`** `s, fromid, toid, count`: a conquest. `toid` is now owned by `s`.
+- **`eliminate_player`** `s` → `seats`, followed by `capture_cards`.
+  **`game_win`** `s`.
+- Also: `start_turn`/`end_turn`, `bonus_units`, `trade_cards` (`cards` = `ABC`…),
+  `award_card`, `capture_capital`, `assign_capital`, `factory_place`, `transfer`, `fortify`,
+  `skip_turn`, `setup_complete`.
+
+Not seen yet: `booted`, `surrender`, `team_win`, `game_terminate`.
+
+## GetBoardData (confirmed 2026-10-13)
+`{"board", "territories", "continents", "borders", "cards", "rules", "colors"}`, each wrapped in
+`@attributes`. Joshua keeps:
+- `board.boardname`;
+- `rules.attacker_dice_sides`, `rules.defender_dice_sides` and `rules.fog`;
+- `territories.territory[].{tid, name}`.
+
+About 180KB for a 132-territory board.
 
 ## URLs
 - Game: `https://www.wargear.net/games/view/{gameid}`

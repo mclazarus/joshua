@@ -22,9 +22,11 @@ T_START = ts(2026, 10, 7, 9)  # Wed 09:00 NY
 class Recorder:
     def __init__(self):
         self.posts: list[str] = []
+        self.blocks: list[list[dict]] = []
 
     async def post(self, text, blocks):
         self.posts.append(text)
+        self.blocks.append(blocks)
         return f"ts{len(self.posts)}"
 
 
@@ -189,3 +191,160 @@ async def test_signup_nag_stops_when_full_old_or_started(env):
     await apply(store, game(gameid=52, turnstamp=now), now + 60, "U1")
     assert await n._signup_tick(now + 60) == 0
     assert rec.posts == []
+
+
+def has_key_button(blocks) -> bool:
+    return any(
+        e.get("action_id") == "offer_apikey" for b in blocks if b["type"] == "actions" for e in b["elements"]
+    )
+
+
+async def test_key_button_offered_to_keyless_player_weekly(env):
+    store, n, rec = env
+    await apply(store, game(turnstamp=T_START), T_START, "U1")
+    assert await n.remind(T_START + 60) == 1
+    assert has_key_button(rec.blocks[0])  # Falken has no key
+    assert await n.remind(ts(2026, 10, 7, 13, 1)) == 1
+    assert not has_key_button(rec.blocks[1])  # offered 4h ago
+    # A new turn a week later gets it again.
+    later = T_START + 7 * 86400
+    await apply(store, game(turnstamp=later, counters=(2, 1, 1)), later, "U1")
+    assert await n.remind(later + 60) == 1
+    assert has_key_button(rec.blocks[2])
+
+
+async def test_key_button_not_offered_with_a_key_or_unregistered(env):
+    store, n, rec = env
+    await store.set_api_key("U1", b"sealed", True)
+    await apply(store, game(turnstamp=T_START), T_START, "U1")
+    await n.remind(T_START + 60)
+    assert not has_key_button(rec.blocks[0])
+    # McKittrick isn't registered at all: there's nobody to ask.
+    await apply(store, game(gameid=43, current=("McKittrick",), turnstamp=T_START), T_START, "U1")
+    await n.remind(T_START + 120)
+    assert not has_key_button(rec.blocks[1])
+
+
+async def test_elimination_announced_only_without_fog(env):
+    store, n, rec = env
+    for gameid, fog in ((42, "None"), (43, "Medium"), (44, "Board Default"), (45, None)):
+        await apply(store, game(gameid=gameid, turnstamp=T_START, fog=fog), T_START, "U1")
+        out = game(gameid=gameid, turnstamp=T_START, fog=fog, eliminated=frozenset({"Lightman"}))
+        await n.handle_events(await apply(store, out, T_START + 60, "U1"), T_START + 60)
+    assert len(rec.posts) == 1 and "<@U2> has been eliminated" in rec.posts[0]
+
+
+async def test_board_default_fog_resolved_from_board(env):
+    from joshua.wargear.models import BoardInfo
+
+    store, n, rec = env
+    await store.save_board(BoardInfo(7, "Open Field", fog="None"))
+    await apply(store, game(turnstamp=T_START, fog="Board Default", boardid=7), T_START, "U1")
+    out = game(turnstamp=T_START, fog="Board Default", boardid=7, eliminated=frozenset({"Lightman"}))
+    await n.handle_events(await apply(store, out, T_START + 60, "U1"), T_START + 60)
+    assert len(rec.posts) == 1
+
+
+async def test_no_elimination_posts_when_game_ends(env):
+    store, n, rec = env
+    now = ts(2026, 10, 7, 12)
+    await apply(store, game(turnstamp=T_START, fog="None"), now - 100, "U1")
+    done = game(
+        current=(),
+        status="Finished",
+        fog="None",
+        winners=("Falken",),
+        endstamp=now,
+        eliminated=frozenset({"Lightman", "McKittrick"}),
+    )
+    await n.handle_events(await apply(store, done, now, "U1"), now)
+    assert rec.posts == []
+
+
+async def test_winner_post_shows_record(env):
+    store, n, rec = env
+    now = ts(2026, 10, 7, 12)
+    for gameid, winner in ((40, "Lightman"), (41, "Falken")):
+        await apply(store, game(gameid=gameid, current=()), now - 100, "U1")
+        done = game(gameid=gameid, current=(), status="Finished", winners=(winner,), endstamp=now)
+        await n.handle_events(await apply(store, done, now, "U1"), now)
+    await n._winner_tick(now + 60)
+    footers = [b["elements"][0]["text"] for bl in rec.blocks for b in bl if b["type"] == "context"]
+    assert any("*Lightman*: 1–1 overall · 1–1 on WOPR" in f for f in footers)
+
+
+async def test_after_action_report_waits_for_winner_post(env):
+    store, n, rec = env
+    now = ts(2026, 10, 7, 12)
+    await apply(store, game(current=()), now - 100, "U1")
+    done = game(current=(), status="Finished", winners=("Falken",), endstamp=now)
+    await n.handle_events(await apply(store, done, now, "U1"), now)
+    await store.queue_history(42, now)
+    history = {
+        "history": {
+            "turn": [
+                {
+                    "@attributes": {
+                        "turnid": "1",
+                        "timestamp": str(now),
+                        "action": "select",
+                        "s": "1",
+                        "tid": "1",
+                    }
+                },
+                {
+                    "@attributes": {
+                        "turnid": "2",
+                        "timestamp": str(now),
+                        "action": "select",
+                        "s": "2",
+                        "tid": "2",
+                    }
+                },
+                {"@attributes": {"turnid": "3", "timestamp": str(now), "action": "start_turn", "s": "1"}},
+                {
+                    "@attributes": {
+                        "turnid": "4",
+                        "timestamp": str(now),
+                        "action": "attack",
+                        "s": "1",
+                        "fromid": "1",
+                        "toid": "2",
+                        "ad": "6",
+                        "dd": "1",
+                        "dl": "1",
+                    }
+                },
+                {
+                    "@attributes": {
+                        "turnid": "5",
+                        "timestamp": str(now),
+                        "action": "occupy",
+                        "s": "1",
+                        "fromid": "1",
+                        "toid": "2",
+                        "count": "1",
+                    }
+                },
+                {
+                    "@attributes": {
+                        "turnid": "6",
+                        "timestamp": str(now),
+                        "action": "eliminate_player",
+                        "s": "1",
+                        "seats": "2",
+                    }
+                },
+                {"@attributes": {"turnid": "7", "timestamp": str(now), "action": "game_win", "s": "1"}},
+            ]
+        }
+    }
+    await store.save_history(42, history, now)
+    assert await n._report_tick(now) == 0  # the winner post goes first
+    await n._winner_tick(now)
+    assert await n._report_tick(now) == 1
+    report = rec.blocks[-1][0]["text"]["text"]
+    assert "AFTER-ACTION REPORT" in report
+    assert "*Falken* eliminated *Lightman*" in report
+    assert "<@" not in report  # names, not pings
+    assert await n._report_tick(now + 60) == 0

@@ -7,6 +7,11 @@ every key is checked anyway, to spot new games.
 
 A live game missing from every Live list it should be on has probably ended,
 so the owning key's Finished list is fetched once to learn who won.
+
+When a tracked game is won, its history (GetHistoryUpdate) is fetched once for the
+after-action report, plus each board's rules once ever (GetBoardData), which give
+dice sides, territory names and the fog level behind "Board Default". At most one
+of each per cycle, using keys that were already queried this cycle.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ from collections.abc import Awaitable, Callable
 from joshua.config import Settings
 from joshua.crypto import KeyBox
 from joshua.db import PlayerRow, Store, now_ts
-from joshua.sync import Event, apply
+from joshua.sync import Event, GameFinished, apply
 from joshua.wargear.client import BadApiKey, RateLimited, WarGearClient, WarGearError
 
 log = logging.getLogger(__name__)
@@ -30,6 +35,11 @@ GONE_AFTER = 2 * 86400
 MAX_FINISHED_PAGES = 5
 # Look up a missing game in Finished lists at most this often.
 FINISHED_RECHECK = 3600
+# Game history fetches: retry this often, this many times, then give up on the report.
+HISTORY_RETRY = 3600
+HISTORY_ATTEMPTS = 3
+# A board fetch that failed is retried after this long.
+BOARD_RETRY = 6 * 3600
 
 EventSink = Callable[[list[Event]], Awaitable[None]]
 
@@ -50,6 +60,7 @@ class Poller:
         self.on_events = on_events
         self._last_full = 0
         self._finished_checked: dict[int, int] = {}
+        self._board_failed: dict[int, int] = {}
         self.wake = asyncio.Event()
 
     async def _keys(self) -> list[tuple[PlayerRow, str, set[int]]]:
@@ -108,6 +119,10 @@ class Poller:
             self._last_full = now
 
         events += await self._close_out_missing(covered, queried, now)
+        for e in events:
+            if isinstance(e, GameFinished) and not e.terminated and await self.store.is_tracked(e.gameid):
+                await self.store.queue_history(e.gameid, now)
+        await self._fetch_extras(queried, now)
         await self.store.kv_set("last_poll_ok", str(now))
         await self.store.kv_set("last_poll_requests", str(self.client.request_count))
 
@@ -168,6 +183,47 @@ class Poller:
                 )
                 await self.store.db.commit()
         return events
+
+    async def _fetch_extras(self, queried: list[tuple[PlayerRow, str]], now: int) -> None:
+        """One board and one game history per cycle, at most."""
+        if not queried:
+            return
+        keys = {p.slack_id: key for p, key in queried}
+        any_key = queried[0][1]
+        try:
+            for boardid in await self.store.boards_needed():
+                if now - self._board_failed.get(boardid, 0) < BOARD_RETRY:
+                    continue
+                try:
+                    board = await self.client.board(any_key, boardid)
+                except WarGearError as e:
+                    if isinstance(e, RateLimited):
+                        raise
+                    log.warning("couldn't fetch board %s: %s", boardid, e)
+                    self._board_failed[boardid] = now
+                else:
+                    await self.store.save_board(board)
+                    log.info("fetched board %s (%s)", boardid, board.name)
+                break
+
+            for gameid, boardid, seen_via in await self.store.history_pending(
+                now - HISTORY_RETRY, HISTORY_ATTEMPTS
+            ):
+                if boardid and not await self.store.board(boardid) and boardid not in self._board_failed:
+                    continue  # wait for the board, so the report gets dice sides and territory names
+                await self.store.history_attempted(gameid, now)
+                try:
+                    payload = await self.client.history(keys.get(seen_via, any_key), gameid)
+                except WarGearError as e:
+                    if isinstance(e, RateLimited):
+                        raise
+                    log.warning("couldn't fetch history for game %s: %s", gameid, e)
+                else:
+                    await self.store.save_history(gameid, payload, now)
+                    log.info("fetched history for game %s", gameid)
+                break
+        except RateLimited:
+            log.warning("rate limited; board/history fetches wait for the next cycle")
 
     async def _finished_pages(self, key: str):
         """Yield finished games page by page. Stops at an empty page, or at a page that

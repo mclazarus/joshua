@@ -1,0 +1,812 @@
+{
+ "board": {
+  "@attributes": {
+   "boardid": "6478",
+   "boardname": "Capital Crusade"
+  }
+ },
+ "rules": {
+  "@attributes": {
+   "boardid": "6478",
+   "attacker_dice_sides": "6",
+   "defender_dice_sides": "6",
+   "fog": "Medium"
+  }
+ },
+ "territories": {
+  "territory": [
+   {
+    "@attributes": {
+     "tid": "0",
+     "name": "Norwegian Fjords"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "1",
+     "name": "Anglia"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "2",
+     "name": "Old Westminster (G. Britannia)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "3",
+     "name": "Saxon Forest"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "4",
+     "name": "Scotia"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "5",
+     "name": "Skandinavia"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "8",
+     "name": "Catalonia"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "9",
+     "name": "Andalucia"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "10",
+     "name": "Lisboa (Iberia)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "11",
+     "name": "Baku Province"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "12",
+     "name": "Tblisi Territory"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "13",
+     "name": "Chernobyl Wasteland"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "14",
+     "name": "Belorussia"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "15",
+     "name": "St. Petersburg Oblast"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "16",
+     "name": "Kremlin-Mocba (Eurasia)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "17",
+     "name": "Hokkaido"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "18",
+     "name": "Honshu"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "19",
+     "name": "Tokyo Prefecture"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "20",
+     "name": "Shikoku"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "21",
+     "name": "Hiroshima Ruins"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "22",
+     "name": "Kathmandu Mountains"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "23",
+     "name": "Punjab"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "24",
+     "name": "Eastern Bengal"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "25",
+     "name": "Hong Kong Trading Post"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "26",
+     "name": "Guangdong"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "27",
+     "name": "Shanghai Port (Indo-China)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "28",
+     "name": "Narita (Nippon)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "29",
+     "name": "Taipei-Taiwan"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "30",
+     "name": "Singapore Outpost"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "31",
+     "name": "Jakarta Territory"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "32",
+     "name": "Kuala Lampur (Malay)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "33",
+     "name": "Dutch Lowlands"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "34",
+     "name": "Greater Prussia"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "35",
+     "name": "Warsaw Territory"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "36",
+     "name": "Isle De Paris"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "37",
+     "name": "Alps Mountains"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "38",
+     "name": "Berlinstadt (Europa)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "39",
+     "name": "Baltica"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "40",
+     "name": "Cape Colony"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "41",
+     "name": "Transvaal"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "42",
+     "name": "Pretoria Territory"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "43",
+     "name": "Bantu"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "44",
+     "name": "Malagasy Island"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "45",
+     "name": "Serengeti"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "46",
+     "name": "Greater Maghreb"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "47",
+     "name": "Sahara Plains"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "48",
+     "name": "Sanai Pinensula"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "49",
+     "name": "Nile Valley"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "50",
+     "name": "Pharos (Afrikaa-Nord)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "51",
+     "name": "Bulawayo (Afrikaa-Sud)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "52",
+     "name": "Fort Washington (Amerigo)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "53",
+     "name": "Blue Ridge Mountains"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "54",
+     "name": "Ontario Valley"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "55",
+     "name": "San Andreas Ruins"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "56",
+     "name": "Niagara"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "57",
+     "name": "Yellowstone Plateau"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "58",
+     "name": "Dakotas"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "59",
+     "name": "Appalacia"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "60",
+     "name": "Yosemite"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "61",
+     "name": "Floridian Island"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "63",
+     "name": "East Georgia Island"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "64",
+     "name": "West Georgia Island"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "65",
+     "name": "O'Higgin's Island"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "66",
+     "name": "Malvinas (South Amerigo)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "67",
+     "name": "Old Zealandia"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "68",
+     "name": "Fort Hobart (Tazmania)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "69",
+     "name": "Aoraki"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "70",
+     "name": "Auckland Island"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "71",
+     "name": "Brisbane Territory"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "72",
+     "name": "Sydey Coast"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "73",
+     "name": "Old South Wales"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "74",
+     "name": "Uluru Badlands"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "75",
+     "name": "Outback"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "76",
+     "name": "Adelaide Center (Australasia)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "77",
+     "name": "Shackelton's Folly"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "78",
+     "name": "Enderby"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "79",
+     "name": "Antarctic Peninsula"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "80",
+     "name": "Weddell"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "81",
+     "name": "Bellinghausen"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "82",
+     "name": "South Pole (Antarcticus)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "83",
+     "name": "Tierra Del Fuego"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "84",
+     "name": "Patagonia"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "85",
+     "name": "Mapuchi"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "86",
+     "name": "Extremadura"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "87",
+     "name": "Santiago Mission (Andes)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "88",
+     "name": "Mujica Colonia"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "89",
+     "name": "Charrua"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "90",
+     "name": "Colonia Del Sacramento"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "91",
+     "name": "Parana"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "92",
+     "name": "Port Montevideo (Rio DeLa Plata)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "93",
+     "name": "Guarini"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "94",
+     "name": "Yukatan Peninsula"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "95",
+     "name": "Mississippi Delta"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "96",
+     "name": "High Plains"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "97",
+     "name": "Yellowstone"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "98",
+     "name": "Old Orleans (Tejas)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "99",
+     "name": "Monument Valley"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "100",
+     "name": "Mojave Sand Plains"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "101",
+     "name": "Rio Grande"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "102",
+     "name": "Las Cruces"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "103",
+     "name": "Red Hills"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "104",
+     "name": "Montezuma's Castle (Pecos)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "106",
+     "name": "Correa"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "107",
+     "name": "Altuve"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "108",
+     "name": "San Lucas"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "109",
+     "name": "San Diego-Tijuana (Baja-Cali) "
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "110",
+     "name": "Flagstaff Territory"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "111",
+     "name": "Alpine"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "112",
+     "name": "Yukon"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "113",
+     "name": "Ruby"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "114",
+     "name": "Ambler"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "115",
+     "name": "Beaver (Alasgoa)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "116",
+     "name": "Junoa"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "117",
+     "name": "Frozen Keystone"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "118",
+     "name": "Northeastern Glacier"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "119",
+     "name": "Old Outback"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "120",
+     "name": "The Citadel (Wasteland)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "121",
+     "name": "Lambeth Palace (Western Arctic)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "122",
+     "name": "Glacier Bay"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "123",
+     "name": "Bartertown"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "124",
+     "name": "Tribal Zone"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "125",
+     "name": "Grande Porto"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "126",
+     "name": "Basque Country"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "127",
+     "name": "Cape Sud"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "128",
+     "name": "Savoonga"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "129",
+     "name": "Noatak (Northern Arctic)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "130",
+     "name": "Coa-Huila"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "131",
+     "name": "Tamaulipas"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "132",
+     "name": "Belizia (Latoa)"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "133",
+     "name": "Pailinia"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "134",
+     "name": "Monumentia"
+    }
+   },
+   {
+    "@attributes": {
+     "tid": "135",
+     "name": "Coyote Hills"
+    }
+   }
+  ]
+ }
+}

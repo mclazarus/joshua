@@ -35,11 +35,14 @@ returns, which differs from its own Swagger spec.
 - `sync.py`: a pure `diff(prev, new) -> events`, plus `apply()`, which writes them to the store.
   New turns are detected with the per-player `turn_counter`.
 - `reminders.py`: the pure `plan_reminders()` / `due_now()` scheduler.
+- `stats.py`: pure `parse_history()` / `replay()` over a game's GetHistoryUpdate log, which gives
+  luck, territory, kills and battles.
 - `notifier.py`: once a tick, works out what's due and posts it:
   - turn reminders;
   - winner nags, one post per game even for team wins;
   - sign-up nags;
-  - "who is X?" prompts.
+  - "who is X?" prompts;
+  - after-action reports.
 - `slack/commands.py`: `/wargear` subcommands, @mentions, the API-key modal, and the "That's me"
   button. `slack/app.py` wires it all together in Socket Mode.
 - `db.py` + `migrations/NNN_*.sql`: SQLite. A game is "tracked" if it's forced on, or if it has
@@ -80,6 +83,27 @@ returns, which differs from its own Swagger spec.
   - every 12h during default loud hours, pinging invitees who haven't joined;
   - stops when the seats (`num_players`) are full. The group invites 6–7 people to 5-seat games,
     first come first served.
+- **API key nudge:** posts that @mention a registered player with no working key get an
+  "Add my API key" button, at most once per player per 7 days (`apikey_offer_days`). The button
+  opens the same modal as `/wargear apikey`.
+- **Fog:** never announce an elimination in a fogged game. Fogged = anything but `None` after
+  resolving `Board Default` from the board's rules, and unknown counts as fogged. The
+  `/wargear games` overview doesn't strike through eliminated players in fogged games either.
+  Eliminations in a game that has just finished are never posted: the winner post and the report
+  cover them.
+- **After-action report:**
+  - one per won, tracked game;
+  - posted after the first winner nag, during default loud hours;
+  - covers luck vs. the odds, peak territory, the kill board, the biggest battle and the
+    bloodiest turn;
+  - names are bold, not @mentions;
+  - costs one GetHistoryUpdate per game (retried hourly, 3 tries) plus one GetBoardData per
+    board, ever.
+- **Records:**
+  - win/loss/draw per player, overall and per board, over finished tracked games;
+  - a team win counts for every member, and a terminated game is a draw;
+  - no backfill: records start when Joshua sees a game finish;
+  - shown in `/wargear stats [board]` and as a footer on the first winner post.
 - **Game type:** the group always plays turn-based games. Simultaneous games are handled but
   less tested.
 

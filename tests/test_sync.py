@@ -128,3 +128,21 @@ async def test_tracking_needs_two_registered_players(store):
     [turn] = await store.open_turns()
     assert (turn.player, turn.slack_id) == ("Falken", "U1")
     assert await store.unmapped_names() == [("McKittrick", 42)]
+
+
+async def test_records_count_wins_losses_and_draws(store):
+    await store.link("U1", "Falken")
+    await store.link("U2", "Lightman")
+    finished = dict(current=(), endstamp=T0 + 99)
+    await apply(store, game(gameid=1, status="Finished", winners=("Falken",), **finished), T0, None)
+    await apply(
+        store, game(gameid=2, status="Finished", winners=("Falken", "Lightman"), **finished), T0, None
+    )
+    await apply(store, game(gameid=3, status="Terminated", board="Moon Base", **finished), T0, None)
+    await apply(store, game(gameid=4), T0, None)  # still running
+    await store.db.execute("UPDATE games SET finished = 1, status = 'Gone' WHERE gameid = 4")  # no result
+    recs = {r.name: (r.wins, r.losses, r.draws) for r in await store.records()}
+    assert recs == {"Falken": (2, 0, 1), "Lightman": (1, 1, 1), "McKittrick": (0, 2, 1)}
+    on_moon = {r.name: (r.wins, r.losses, r.draws) for r in await store.records("moon base")}
+    assert on_moon == {"Falken": (0, 0, 1), "Lightman": (0, 0, 1), "McKittrick": (0, 0, 1)}
+    assert await store.boards_played() == ["Moon Base", "WOPR"]

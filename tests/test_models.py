@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from joshua.wargear.models import parse_game_list
+from joshua.wargear.models import is_fogged, parse_game_list
 
 # Hand-written from the Swagger spec until Phase 0 captures real responses.
 PAYLOAD = {
@@ -97,3 +97,12 @@ def test_real_finished_games_decode_php_serialized_ids():
     team = games[498655]
     assert team.simultaneous
     assert len(team.winners) == 3
+
+
+def test_fog_is_kept_and_unknown_fog_counts_as_fogged():
+    assert load("my_live.json")[81545973].fog == "Medium"
+    assert not is_fogged("None")
+    assert is_fogged("Light") and is_fogged("Heavy")
+    assert is_fogged("Board Default")  # until we know the board's fog
+    assert not is_fogged("Board Default", "None")
+    assert is_fogged(None, None)

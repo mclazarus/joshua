@@ -6,8 +6,10 @@ Joshua is a Slack bot that watches our [WarGear](https://www.wargear.net) games.
 shared channel when it's your turn. It nags you every 4 hours during your loud hours, gives you
 a last call before quiet hours, and always warns you 30 and 5 minutes before WarGear skips you.
 When a game ends, it tells the winner to start the next one, then reminds them once more a day
-later if they haven't. For new sign-up games, it pings invitees who haven't joined while seats
-are still open. Named for the WOPR in *WarGames* (1983).
+later if they haven't, and posts an after-action report: dice luck, peak territory, the kill
+board, the biggest battle and the bloodiest turn. For new sign-up games, it pings invitees who
+haven't joined while seats are still open. It never announces eliminations in fogged games.
+Named for the WOPR in *WarGames* (1983).
 
 ## How it works
 - **WarGear:** uses WarGear's published REST API with players' own API keys (see
@@ -31,8 +33,11 @@ are still open. Named for the WOPR in *WarGames* (1983).
 /wargear register <your WarGear name>
 /wargear apikey            # opens a private modal
 /wargear hours 08:00-22:00 # optional; uses your Slack timezone
+/wargear stats [board]     # win/loss/draw records, overall or for one board
 ```
 Players who haven't registered get a "That's me" button the first time they show up in a game.
+Registered players without an API key get an "Add my API key" button on posts that mention
+them, at most once a week.
 
 ## Development
 ```
@@ -41,6 +46,7 @@ uv run pytest
 uv run joshua genkey                       # make a JOSHUA_SECRET_KEY
 uv run joshua discover                     # dump raw API responses (gitignored); prompts for your key
 uv run joshua dry-run --me YOURNAME        # poll once, print, post nothing; prompts for your key
+uv run joshua dry-run --me YOURNAME --report GAMEID  # ...and print a finished game's after-action report
 cp .env.example .env && uv run joshua run
 ```
 

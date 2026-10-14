@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import zlib
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -19,6 +22,7 @@ from joshua.reminders import (
     plan_reminders,
 )
 from joshua.slack import messages as m
+from joshua.stats import parse_history, replay
 from joshua.sync import Event, GameFinished, PlayerEliminated, TurnStarted
 
 log = logging.getLogger(__name__)
@@ -26,6 +30,21 @@ log = logging.getLogger(__name__)
 FIRST, FOLLOWUP = "first", "followup"
 # Ask about at most this many unknown WarGear names per tick.
 IDENTITY_PROMPTS_PER_TICK = 2
+KEY_OFFER_KV = "apikey_offer:"
+
+
+def key_offer_due(
+    who: Sequence[m.Who], last_offered: dict[str, int | None], now: int, every: int
+) -> list[str]:
+    """Slack ids of mentioned players with no working key who haven't been offered the button lately."""
+    due = []
+    for w in who:
+        if not w.slack_id or w.has_key or w.slack_id in due:
+            continue
+        last = last_offered.get(w.slack_id)
+        if last is None or now - last >= every:
+            due.append(w.slack_id)
+    return due
 
 
 class Poster(Protocol):
@@ -70,7 +89,26 @@ class Notifier:
 
     async def who(self, wargear_name: str) -> m.Who:
         p = await self.store.player_by_name(wargear_name)
-        return m.Who(wargear_name, p.slack_id if p else None)
+        return m.Who(wargear_name, p.slack_id if p else None, p.has_key if p else True)
+
+    async def post(
+        self, msg: m.Message, mentioned: Sequence[m.Who] = (), now: int | None = None
+    ) -> str | None:
+        """Post to the channel, adding the "add your API key" button if a keyless player is due one."""
+        now = now or now_ts()
+        text, blocks = msg
+        last = {}
+        for w in mentioned:
+            if w.slack_id and not w.has_key:
+                raw = await self.store.kv_get(KEY_OFFER_KV + w.slack_id)
+                last[w.slack_id] = int(raw) if raw else None
+        due = key_offer_due(mentioned, last, now, self.settings.apikey_offer_days * 86400)
+        if due:
+            blocks = m.with_key_offer(blocks)
+        ts = await self.poster.post(text, blocks)
+        for slack_id in due:
+            await self.store.kv_set(KEY_OFFER_KV + slack_id, str(now))
+        return ts
 
     async def _loud_time(self, wargear_name: str, at: int) -> int:
         """``at``, or the next loud-hours start for this player if ``at`` is in quiet hours."""
@@ -110,7 +148,13 @@ class Notifier:
                         )
                         log.info("turn started: %s / %s; reminders: %s", game.name, e.player, schedule)
                 case PlayerEliminated():
-                    await self.poster.post(*m.eliminated(await self.who(e.player), game.name))
+                    if game.finished:
+                        log.info("not announcing %s's elimination: %s is over", e.player, game.name)
+                    elif await self.store.fogged(e.gameid):
+                        log.info("not announcing %s's elimination: %s is fogged", e.player, game.name)
+                    else:
+                        who = await self.who(e.player)
+                        await self.post(m.eliminated(who, game.name), [who], now)
                 case GameFinished(terminated=True):
                     await self.poster.post(*m.terminated(game.name))
                 case GameFinished():
@@ -131,6 +175,7 @@ class Notifier:
         posted += await self._winner_tick(now)
         posted += await self._signup_tick(now)
         posted += await self._identity_tick(now)
+        posted += await self._report_tick(now)
         return posted
 
     async def remind(self, now: int) -> int:
@@ -172,7 +217,7 @@ class Notifier:
             now,
         )
         log.info("reminder %s: %s / %s", send.kind, turn.game_name, turn.player)
-        await self.poster.post(text, blocks)
+        await self.post((text, blocks), [m.Who(turn.player, turn.slack_id, turn.has_key)], now)
         await self.store.record_reminder(
             turn.gameid, turn.player, turn.turnstamp, send.kind, int(send.when.timestamp()), posted=True
         )
@@ -210,8 +255,9 @@ class Notifier:
                     self.settings.game_url(gameid),
                     duration,
                     self.settings.wargear_new_game_url,
+                    records=await self._records_for(winners, game.board),
                 )
-            await self.poster.post(*msg)
+            await self.post(msg, who, now)
             await done("posted")
             posted += 1
         return posted
@@ -229,15 +275,17 @@ class Notifier:
                 continue
             invited = [await self.who(n) for n in game.invited]
             joined = [await self.who(n) for n in game.joined]
-            await self.poster.post(
-                *m.signup_nag(
+            await self.post(
+                m.signup_nag(
                     game.name,
                     self.settings.game_url(game.gameid),
                     invited,
                     joined,
                     game.seats,
                     game.spots_left,
-                )
+                ),
+                invited,
+                now,
             )
             await self.store.set_signup_nagged(game.gameid, now)
             posted += 1
@@ -254,5 +302,55 @@ class Notifier:
                 *m.identity_prompt(name, game.name if game else f"#{gameid}", self.settings.game_url(gameid))
             )
             await self.store.record_identity_prompt(name, self.settings.slack_channel_id, ts)
+            posted += 1
+        return posted
+
+    async def _records_for(self, winners: Sequence[str], board: str | None) -> list[m.RecordLine]:
+        overall = {r.name.lower(): r for r in await self.store.records()}
+        on_board = {r.name.lower(): r for r in await self.store.records(board)} if board else {}
+        return [
+            m.RecordLine(w, overall.get(w.lower()), on_board.get(w.lower()), board)
+            for w in winners
+            if w.lower() in overall
+        ]
+
+    async def _report_tick(self, now: int) -> int:
+        """After-action reports for finished games whose history has been fetched."""
+        if not is_loud(_utc(now), self.tz_for(None), LoudHours(*self.settings.loud_hours)):
+            return 0
+        posted = 0
+        for pending in await self.store.reports_due():
+            game = await self.store.game_state(pending.gameid)
+            if game is None or not await self.store.is_tracked(pending.gameid):
+                await self.store.finish_report(pending.gameid, "not tracked")
+                continue
+            board = await self.store.board(game.boardid)
+            try:
+                actions = parse_history(json.loads(zlib.decompress(pending.body)))
+                stats = replay(
+                    actions,
+                    board.attacker_sides if board else 6,
+                    board.defender_sides if board else 6,
+                    len(board.territories) if board else 0,
+                )
+            except Exception:  # noqa: BLE001 - a bad log mustn't block the tick forever
+                log.exception("couldn't replay history for game %s", pending.gameid)
+                await self.store.finish_report(pending.gameid, "replay failed")
+                continue
+            if not actions:
+                await self.store.finish_report(pending.gameid, "empty history")
+                continue
+            names = {str(p.seat): p.name for p in game.players if p.seat is not None}
+            await self.poster.post(
+                *m.after_action_report(
+                    game.name,
+                    self.settings.game_url(game.gameid),
+                    stats,
+                    names,
+                    board.territories if board else {},
+                    game.winners,
+                )
+            )
+            await self.store.finish_report(pending.gameid, "posted")
             posted += 1
         return posted

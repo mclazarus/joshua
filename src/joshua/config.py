@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # Open games older than this are abandoned sign-up pages; ignore them.
     signup_max_age_days: int = 14
 
+    # Offer the "add your API key" button to a keyless player at most this often.
+    apikey_offer_days: int = 7
+
     log_level: str = Field(default="INFO")
 
     @cached_property

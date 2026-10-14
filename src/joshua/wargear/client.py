@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from joshua import __version__
-from joshua.wargear.models import Game, parse_game_list
+from joshua.wargear.models import BoardInfo, Game, parse_board, parse_game_list
 from joshua.wargear.ratelimit import RateGate
 
 log = logging.getLogger(__name__)
@@ -108,6 +108,20 @@ class WarGearClient:
 
     async def current_turns(self, api_key: str) -> Any:
         return await self._get("/GetCurrentTurns", api_key)
+
+    async def history(self, api_key: str, gameid: int) -> dict:
+        """The whole action log of a game. Large (~1MB for a long game), so fetch it once."""
+        data = await self._get(f"/GetHistoryUpdate/{gameid}", api_key)
+        if not isinstance(data, dict) or "history" not in data:
+            raise WarGearError(f"GetHistoryUpdate/{gameid}: unexpected {type(data).__name__} response")
+        return data
+
+    async def board(self, api_key: str, boardid: int) -> BoardInfo:
+        data = await self._get(f"/GetBoardData/{boardid}", api_key)
+        try:
+            return parse_board(data, boardid)
+        except ValueError as e:
+            raise WarGearError(str(e)) from e
 
     async def raw(self, path: str, api_key: str, **params: Any) -> Any:
         """Unparsed call, used by the discovery CLI."""

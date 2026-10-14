@@ -169,8 +169,37 @@ async def _dry_run(settings: Settings, args) -> None:
         for r in notifier.plan_for(turn):
             if r.when.timestamp() > now_ts():
                 print(f"  {turn.game_name} / {turn.player}: {r.kind:9} {r.when.astimezone():%a %H:%M %Z}")
+    if args.report:
+        await _print_report(wg, key, args.report, settings.game_url(args.report))
     await wg.aclose()
     await store.close()
+
+
+async def _print_report(wg, key: str, gameid: int, url: str) -> None:
+    """The after-action report for one finished game: Finished list, board and history (3 requests)."""
+    from joshua.slack import messages as m
+    from joshua.stats import parse_history, replay
+
+    game = next((g for g in await wg.my_games(key, "Finished") if g.gameid == gameid), None)
+    if game is None:
+        print(f"\nGame {gameid} isn't on the first page of your Finished list.")
+        return
+    state = game.normalize()
+    board = await wg.board(key, game.boardid) if game.boardid else None
+    stats = replay(
+        parse_history(await wg.history(key, gameid)),
+        board.attacker_sides if board else 6,
+        board.defender_sides if board else 6,
+        len(board.territories) if board else 0,
+    )
+    names = {str(p.seat): p.name for p in state.players if p.seat is not None}
+    text, blocks = m.after_action_report(
+        state.name, url, stats, names, board.territories if board else {}, state.winners
+    )
+    print(f"\nAfter-action report ({wg.request_count} WarGear requests in total) →\n  {text}")
+    for b in blocks:
+        body = b["text"]["text"] if b["type"] == "section" else b["elements"][0]["text"]
+        print("  " + body.replace("\n", "\n  "))
 
 
 def cmd_dry_run(settings: Settings, args) -> None:
@@ -189,6 +218,7 @@ def main() -> None:
     d.add_argument("--out", default="tests/fixtures/raw")
     r = sub.add_parser("dry-run", help="poll once and print what would be posted")
     r.add_argument("--me", help="your WarGear name")
+    r.add_argument("--report", type=int, help="also print the after-action report for this finished game")
     args = parser.parse_args()
 
     # Anything we create (the DB with encrypted keys, its WAL files) is owner-only.

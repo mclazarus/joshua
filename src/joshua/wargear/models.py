@@ -6,7 +6,8 @@ Quirks this module absorbs:
 * ``current_turn`` is a list of player *names*, ``[null]`` when nobody is up;
 * ``winners``/``eliminated`` are PHP-serialized arrays of player *id hashes*
   (``a:1:{i:0;s:32:"…";}``), or null/"" when empty;
-* ``host`` is a player id hash.
+* ``host`` is a player id hash;
+* ``fog`` is "None", "Light", "Medium", "Heavy", "Board Default" or "".
 
 ``Game.normalize()`` turns a ``Game`` into the ``GameState`` the rest of the bot uses.
 """
@@ -26,6 +27,15 @@ log = logging.getLogger(__name__)
 PHP_STRING = re.compile(r's:\d+:"(.*?)";')
 NO_TIMER = 9_999_999_999  # time_remaining when a game has no running clock
 ELIMINATED_STATUSES = {"eliminated", "booted", "surrendered"}
+BOARD_DEFAULT_FOG = "Board Default"
+
+
+def is_fogged(game_fog: str | None, board_fog: str | None = None) -> bool:
+    """Does fog hide anything in this game? Unknown counts as fogged: staying quiet is the safe side."""
+    fog = game_fog
+    if fog in (None, "", BOARD_DEFAULT_FOG):
+        fog = board_fog
+    return fog not in ("None", "Off")
 
 
 def _as_list(v: Any) -> list[Any]:
@@ -85,6 +95,7 @@ class Game(WGModel):
     boot_type: str | None = None
     boot_time: int | None = None
     time_remaining: int | None = None
+    fog: str | None = None
 
     @field_validator("players", "eliminated", "current_turn", "winners", mode="before")
     @classmethod
@@ -134,6 +145,8 @@ class GameState:
     startstamp: int | None
     endstamp: int | None
     extra: dict[str, Any] = field(default_factory=dict, compare=False)
+    boardid: int | None = None
+    fog: str | None = None
 
     @property
     def finished(self) -> bool:
@@ -231,6 +244,8 @@ class GameState:
                 "time_remaining": None if g.time_remaining == NO_TIMER else g.time_remaining,
                 "boot_type": g.boot_type,
             },
+            boardid=g.boardid,
+            fog=g.fog,
         )
 
 
@@ -259,3 +274,53 @@ def parse_game_list(payload: Any) -> list[Game]:
             continue
         seen[g.gameid] = g
     return list(seen.values())
+
+
+@dataclass(frozen=True)
+class BoardInfo:
+    """The parts of GetBoardData we use: dice, fog, and territory names."""
+
+    boardid: int
+    name: str | None = None
+    fog: str | None = None
+    attacker_sides: int = 6
+    defender_sides: int = 6
+    territories: dict[int, str] = field(default_factory=dict)
+
+
+def _attrs(node: Any) -> dict[str, Any]:
+    """GetBoardData/GetHistoryUpdate come from XML: fields sit under ``@attributes``."""
+    if isinstance(node, list):
+        node = node[0] if node else {}
+    if not isinstance(node, dict):
+        return {}
+    return node.get("@attributes", node)
+
+
+def parse_board(payload: Any, boardid: int) -> BoardInfo:
+    if not isinstance(payload, dict):
+        raise ValueError(f"GetBoardData: unexpected {type(payload).__name__} response")
+    board, rules = _attrs(payload.get("board")), _attrs(payload.get("rules"))
+    territories = (payload.get("territories") or {}).get("territory") or []
+    if isinstance(territories, dict):
+        territories = [territories]
+
+    def sides(key: str) -> int:
+        try:
+            return int(rules.get(key) or 6)
+        except ValueError:
+            return 6
+
+    names = {}
+    for t in territories:
+        a = _attrs(t)
+        if str(a.get("tid", "")).isdigit() and a.get("name"):
+            names[int(a["tid"])] = a["name"]
+    return BoardInfo(
+        boardid=boardid,
+        name=board.get("boardname"),
+        fog=rules.get("fog") or None,
+        attacker_sides=sides("attacker_dice_sides"),
+        defender_sides=sides("defender_dice_sides"),
+        territories=names,
+    )

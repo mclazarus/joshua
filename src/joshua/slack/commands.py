@@ -1,4 +1,4 @@
-"""Slash commands, @mentions, the API key modal and the "That's me" button."""
+"""Slash commands, @mentions, the API key modal, and the "That's me" and "Add my API key" buttons."""
 
 from __future__ import annotations
 
@@ -45,12 +45,14 @@ async def game_rows(deps: Deps, only_player: str | None = None) -> list[m.GameRo
             if not turns:
                 continue
         waiting = [(m.Who(t.player, t.slack_id), t.started_at, t.deadline) for t in turns]
+        # In a fogged game, who's been eliminated is hidden information.
+        show_eliminated = not g.open and not await deps.store.fogged(g.gameid)
         players = []
         for p in g.players:
             if g.open:
                 label = p.name if p.joined else f"_{p.name} (invited)_"
             else:
-                label = f"~{p.name}~" if p.name in g.eliminated else p.name
+                label = f"~{p.name}~" if show_eliminated and p.name in g.eliminated else p.name
             players.append(label)
         rows.append(
             m.GameRow(
@@ -162,6 +164,22 @@ def register(app: AsyncApp, deps: Deps) -> None:
                     return await plain("I don't know who you are. `/wargear register <name>`")
                 await say(m.my_turns(await game_rows(deps, p.wargear_name), now_ts()))
 
+            case "stats" | "record" | "records":
+                boards = await store.boards_played()
+                board = None
+                if rest:
+                    matches = [b for b in boards if rest.lower() in b.lower()]
+                    exact = [b for b in matches if b.lower() == rest.lower()]
+                    if not matches:
+                        return await plain(
+                            f"No finished games on a board matching *{rest}*. "
+                            f"Boards: {', '.join(boards) or 'none yet'}."
+                        )
+                    if len(matches) > 1 and not exact:
+                        return await plain(f"Which board? {', '.join(matches)}")
+                    board = (exact or matches)[0]
+                await say(m.records_table(await store.records(board), board, boards))
+
             case "who":
                 pairs = [(p.wargear_name, p.slack_id, p.tz) for p in await store.players() if p.wargear_name]
                 await say(m.who_table(pairs))
@@ -256,9 +274,27 @@ def register(app: AsyncApp, deps: Deps) -> None:
             return await _ephemeral(client, settings, user, f"*{name}* is already <@{e.slack_id}>.")
         await refresh_tz(client, user)
         text, blocks = m.identity_claimed(name, user)
+        p = await store.player(user)
+        if p and not p.has_key:
+            blocks = m.with_key_offer(blocks)
         await client.chat_update(
             channel=body["channel"]["id"], ts=body["message"]["ts"], text=text, blocks=blocks
         )
+
+    @app.action(m.KEY_OFFER_ACTION)
+    async def offer_apikey(ack, body, client):
+        await ack()
+        user = body["user"]["id"]
+        log.info("API key button pressed by %s", user)
+        if not await store.player(user):
+            return await _ephemeral(
+                client,
+                settings,
+                user,
+                "I don't know who you are yet. `/wargear register <your WarGear name>`, "
+                "then press the button again.",
+            )
+        await client.views_open(trigger_id=body["trigger_id"], view=apikey_modal(settings))
 
     @app.action(re.compile(r"^open_"))
     async def link_clicked(ack):

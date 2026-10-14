@@ -3,11 +3,11 @@ from cryptography.fernet import Fernet
 
 from joshua.config import Settings
 from joshua.crypto import KeyBox
-from joshua.db import Store
+from joshua.db import Store, now_ts
 from joshua.poller import Poller
 from joshua.sync import GameFinished
-from joshua.wargear.client import BadApiKey
-from joshua.wargear.models import Game, Player
+from joshua.wargear.client import BadApiKey, WarGearError
+from joshua.wargear.models import BoardInfo, Game, Player
 from joshua.wargear.ratelimit import RateGate
 
 
@@ -32,6 +32,20 @@ class FakeClient:
         self.finished: dict[str, list[Game]] = {}
         self.bad: set[str] = set()
         self.request_count = 0
+        self.histories: dict[int, dict] = {}
+        self.boards: dict[int, BoardInfo] = {}
+
+    async def history(self, key, gameid):
+        self.calls.append((key, "history", gameid))
+        self.request_count += 1
+        if gameid not in self.histories:
+            raise WarGearError("no history")
+        return self.histories[gameid]
+
+    async def board(self, key, boardid):
+        self.calls.append((key, "board", boardid))
+        self.request_count += 1
+        return self.boards.get(boardid) or BoardInfo(boardid, f"Board {boardid}")
 
     async def my_games(self, key, selector="Live", page=None):
         self.calls.append((key, selector) if page is None else (key, selector, page))
@@ -146,3 +160,49 @@ async def test_api_keys_are_encrypted_on_disk(tmp_path):
     store = await Store.open(str(path))
     assert box.open((await store.player("U1")).enc_api_key) == secret
     await store.close()
+
+
+def _extras(client):
+    return [c for c in client.calls if c[1] in ("history", "board")]
+
+
+async def test_won_game_fetches_board_and_history_once(env):
+    store, client, poller = env
+    client.live["key-Falken"] = [wg_game(7, ["Falken", "Lightman"], "1", boardid=99)]
+    await poller.poll_once()
+    assert _extras(client) == [("key-Falken", "board", 99)]  # live tracked game: board for its fog
+    client.calls.clear()
+    client.live["key-Falken"] = [
+        wg_game(7, ["Falken", "Lightman"], None, boardid=99, winners=["2"], gamestatus="Finished", endstamp=2)
+    ]
+    client.histories[7] = {"history": {"turn": []}}
+    await poller.poll_once()
+    assert _extras(client) == [("key-Falken", "history", 7)]
+    client.calls.clear()
+    await poller.poll_once()
+    await poller.poll_once()
+    assert _extras(client) == []
+    assert [r.gameid for r in await store.reports_due()] == [7]
+
+
+async def test_history_not_fetched_for_untracked_or_terminated_games(env):
+    store, client, poller = env
+    await store.unlink("U2")  # Lightman unregistered: game 7 has one registered player
+    client.live["key-Falken"] = [wg_game(7, ["Falken", "Lightman"], "1")]
+    await poller.poll_once()
+    client.live["key-Falken"] = [wg_game(7, ["Falken", "Lightman"], None, winners=["1"], endstamp=2)]
+    await poller.poll_once()
+    assert _extras(client) == []
+
+
+async def test_history_retries_are_capped(env):
+    store, client, poller = env
+    client.live["key-Falken"] = [wg_game(7, ["Falken", "Lightman"], "1")]
+    await poller.poll_once()
+    client.live["key-Falken"] = [wg_game(7, ["Falken", "Lightman"], None, winners=["1"], endstamp=2)]
+    await poller.poll_once()  # queues the history; the fetch fails
+    falken = await store.player("U1")
+    start = now_ts()
+    for minutes in (10, 61, 65, 125, 190, 300):
+        await poller._fetch_extras([(falken, "key-Falken")], start + minutes * 60)
+    assert sum(1 for c in client.calls if c[1] == "history") == 3  # first try, then hourly, then give up

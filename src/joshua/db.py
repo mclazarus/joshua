@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import time
+import zlib
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 
 import aiosqlite
 
-from joshua.wargear.models import GameState, PlayerState
+from joshua.wargear.models import BoardInfo, GameState, PlayerState, is_fogged
 
 
 def now_ts() -> int:
@@ -26,6 +27,11 @@ class PlayerRow:
     enc_api_key: bytes | None
     key_ok: int | None
 
+    @property
+    def has_key(self) -> bool:
+        """Has a key WarGear hasn't rejected (untested counts)."""
+        return bool(self.enc_api_key) and self.key_ok != 0
+
 
 @dataclass(frozen=True)
 class OpenTurn:
@@ -38,6 +44,27 @@ class OpenTurn:
     slack_id: str | None
     tz: str | None
     loud_hours: str | None
+    has_key: bool = True
+
+
+@dataclass(frozen=True)
+class Record:
+    """One player's results in finished, tracked games. Terminated games count as draws."""
+
+    name: str
+    wins: int = 0
+    losses: int = 0
+    draws: int = 0
+
+    @property
+    def played(self) -> int:
+        return self.wins + self.losses + self.draws
+
+
+@dataclass(frozen=True)
+class PendingReport:
+    gameid: int
+    body: bytes
 
 
 def _prepare_db_file(path: Path) -> None:
@@ -211,6 +238,8 @@ class Store:
             createstamp=g["createstamp"],
             startstamp=g["startstamp"],
             endstamp=g["endstamp"],
+            boardid=g["boardid"],
+            fog=g["fog"],
         )
 
     async def save_game(self, s: GameState, seen_via: str | None) -> None:
@@ -218,8 +247,8 @@ class Store:
         await self.db.execute(
             """INSERT INTO games(gameid, name, board, host, status, gametype, num_players, turnstamp,
                                  boot_time, createstamp, startstamp, endstamp, finished, winners,
-                                 first_seen_at, last_seen_at, seen_via)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 first_seen_at, last_seen_at, seen_via, boardid, fog)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(gameid) DO UPDATE SET
                  name = excluded.name, board = excluded.board, host = excluded.host,
                  status = excluded.status, gametype = excluded.gametype,
@@ -228,7 +257,9 @@ class Store:
                  createstamp = excluded.createstamp, startstamp = excluded.startstamp,
                  endstamp = excluded.endstamp, finished = excluded.finished,
                  winners = excluded.winners, last_seen_at = excluded.last_seen_at,
-                 seen_via = excluded.seen_via""",
+                 seen_via = excluded.seen_via,
+                 boardid = COALESCE(excluded.boardid, games.boardid),
+                 fog = COALESCE(excluded.fog, games.fog)""",
             (
                 s.gameid,
                 s.name,
@@ -247,6 +278,8 @@ class Store:
                 t,
                 t,
                 seen_via,
+                s.boardid,
+                s.fog,
             ),
         )
         await self.db.execute("DELETE FROM game_players WHERE gameid = ?", (s.gameid,))
@@ -365,13 +398,14 @@ class Store:
         where = f"AND ({self._TRACKED})" if tracked_only else ""
         cur = await self.db.execute(
             f"""SELECT t.gameid, g.name AS game_name, t.player, t.turnstamp, t.started_at, t.deadline,
-                       p.slack_id, p.tz, p.loud_hours
+                       p.slack_id, p.tz, p.loud_hours,
+                       COALESCE(p.enc_api_key IS NOT NULL AND COALESCE(p.key_ok, 1) != 0, 1) AS has_key
                 FROM turns t JOIN games g ON g.gameid = t.gameid
                 LEFT JOIN players p ON p.wargear_name = t.player
                 WHERE t.ended_at IS NULL AND g.finished = 0 {where}
                 ORDER BY t.deadline"""
         )
-        return [OpenTurn(**dict(r)) for r in await cur.fetchall()]
+        return [OpenTurn(**{**dict(r), "has_key": bool(r["has_key"])}) for r in await cur.fetchall()]
 
     # --- reminders -------------------------------------------------------
 
@@ -420,3 +454,151 @@ class Store:
             "INSERT OR REPLACE INTO identity_prompts VALUES (?, ?, ?, ?)", (name, now_ts(), channel, ts)
         )
         await self.db.commit()
+
+    # --- fog -------------------------------------------------------------
+
+    async def fogged(self, gameid: int) -> bool:
+        """Is this game fogged? Resolves "Board Default" from the board's rules when we have them."""
+        cur = await self.db.execute(
+            "SELECT g.fog, b.fog FROM games g LEFT JOIN boards b ON b.boardid = g.boardid WHERE g.gameid = ?",
+            (gameid,),
+        )
+        row = await cur.fetchone()
+        return is_fogged(row[0], row[1]) if row else True
+
+    # --- boards ----------------------------------------------------------
+
+    async def save_board(self, b: BoardInfo) -> None:
+        await self.db.execute(
+            """INSERT OR REPLACE INTO boards(boardid, name, fog, attacker_sides, defender_sides, territories,
+                                             fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                b.boardid,
+                b.name,
+                b.fog,
+                b.attacker_sides,
+                b.defender_sides,
+                json.dumps({str(k): v for k, v in b.territories.items()}),
+                now_ts(),
+            ),
+        )
+        await self.db.commit()
+
+    async def board(self, boardid: int | None) -> BoardInfo | None:
+        if boardid is None:
+            return None
+        cur = await self.db.execute("SELECT * FROM boards WHERE boardid = ?", (boardid,))
+        r = await cur.fetchone()
+        if r is None:
+            return None
+        return BoardInfo(
+            r["boardid"],
+            r["name"],
+            r["fog"],
+            r["attacker_sides"] or 6,
+            r["defender_sides"] or 6,
+            {int(k): v for k, v in json.loads(r["territories"]).items()},
+        )
+
+    async def boards_needed(self) -> list[int]:
+        """Boards of tracked live games and of games waiting on a history fetch, not fetched yet."""
+        cur = await self.db.execute(
+            f"""SELECT DISTINCT g.boardid FROM games g
+                LEFT JOIN game_history h ON h.gameid = g.gameid
+                WHERE g.boardid IS NOT NULL
+                  AND g.boardid NOT IN (SELECT boardid FROM boards)
+                  AND ((g.finished = 0 AND COALESCE(g.status, '') != 'Open' AND ({self._TRACKED}))
+                       OR (h.gameid IS NOT NULL AND h.body IS NULL))
+                ORDER BY g.boardid"""
+        )
+        return [r[0] for r in await cur.fetchall()]
+
+    # --- history and after-action reports --------------------------------
+
+    async def queue_history(self, gameid: int, at: int) -> None:
+        await self.db.execute(
+            "INSERT OR IGNORE INTO game_history(gameid, queued_at) VALUES (?, ?)", (gameid, at)
+        )
+        await self.db.commit()
+
+    async def history_pending(
+        self, tried_before: int, max_attempts: int
+    ) -> list[tuple[int, int | None, str | None]]:
+        """(gameid, boardid, seen_via) for histories still to fetch, oldest first."""
+        cur = await self.db.execute(
+            """SELECT h.gameid, g.boardid, g.seen_via FROM game_history h JOIN games g USING (gameid)
+               WHERE h.body IS NULL AND h.attempts < ?
+                 AND (h.last_attempt_at IS NULL OR h.last_attempt_at < ?)
+               ORDER BY h.queued_at""",
+            (max_attempts, tried_before),
+        )
+        return [(r[0], r[1], r[2]) for r in await cur.fetchall()]
+
+    async def history_attempted(self, gameid: int, at: int) -> None:
+        await self.db.execute(
+            "UPDATE game_history SET attempts = attempts + 1, last_attempt_at = ? WHERE gameid = ?",
+            (at, gameid),
+        )
+        await self.db.commit()
+
+    async def save_history(self, gameid: int, payload: object, at: int) -> None:
+        body = zlib.compress(json.dumps(payload, separators=(",", ":")).encode())
+        await self.db.execute(
+            "UPDATE game_history SET body = ?, fetched_at = ? WHERE gameid = ?", (body, at, gameid)
+        )
+        await self.db.commit()
+
+    async def reports_due(self) -> list[PendingReport]:
+        """Fetched histories not reported yet, once the game's first winner nag has gone out."""
+        cur = await self.db.execute(
+            """SELECT h.gameid, h.body FROM game_history h
+               WHERE h.body IS NOT NULL AND h.report_posted_at IS NULL
+                 AND NOT EXISTS (SELECT 1 FROM winner_nags w
+                                 WHERE w.gameid = h.gameid AND w.kind = 'first' AND w.sent_at IS NULL)
+               ORDER BY h.fetched_at"""
+        )
+        return [PendingReport(r[0], r[1]) for r in await cur.fetchall()]
+
+    async def finish_report(self, gameid: int, outcome: str) -> None:
+        await self.db.execute(
+            "UPDATE game_history SET report_posted_at = ?, report_outcome = ? WHERE gameid = ?",
+            (now_ts(), outcome, gameid),
+        )
+        await self.db.commit()
+
+    # --- records ---------------------------------------------------------
+
+    async def records(self, board: str | None = None) -> list[Record]:
+        """Win/loss/draw per player over finished tracked games, optionally for one board.
+
+        A game counts once it has winners (team wins count for every member) or was terminated
+        (a draw). Games closed out as "Gone" with no winners don't count.
+        """
+        cur = await self.db.execute(
+            f"""SELECT g.gameid, g.status, g.winners, gp.wargear_name FROM games g
+                JOIN game_players gp ON gp.gameid = g.gameid
+                WHERE g.finished = 1 AND ({self._TRACKED})
+                  AND (? IS NULL OR g.board = ? COLLATE NOCASE)""",
+            (board, board),
+        )
+        tally: dict[str, list[int]] = {}
+        display: dict[str, str] = {}
+        for _gameid, status, winners, name in await cur.fetchall():
+            won = {w.lower() for w in json.loads(winners)}
+            if "terminat" in (status or "").lower():
+                col = 2
+            elif won:
+                col = 0 if name.lower() in won else 1
+            else:
+                continue
+            display.setdefault(name.lower(), name)
+            tally.setdefault(name.lower(), [0, 0, 0])[col] += 1
+        records = [Record(display[k], *v) for k, v in tally.items()]
+        return sorted(records, key=lambda r: (-r.wins, r.losses, r.name.lower()))
+
+    async def boards_played(self) -> list[str]:
+        cur = await self.db.execute(
+            f"""SELECT DISTINCT g.board FROM games g
+                WHERE g.finished = 1 AND g.board IS NOT NULL AND ({self._TRACKED}) ORDER BY g.board"""
+        )
+        return [r[0] for r in await cur.fetchall()]
