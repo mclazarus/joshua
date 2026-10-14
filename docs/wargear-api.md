@@ -98,6 +98,7 @@ About 180KB for a 132-territory board.
 
 ## URLs
 - Game: `https://www.wargear.net/games/view/{gameid}`
+- Join an open game: `https://www.wargear.net/games/join/{gameid}` (the sign-up nag's button)
 - Rematch: `…/games/view/{gameid}/Info?action=rematch`. **Deliberately not used**: the group finds WarGear's rematch flow unreliable.
 - New game: `https://www.wargear.net/games/create`
 

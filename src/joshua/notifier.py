@@ -297,7 +297,7 @@ class Notifier:
             await self.post(
                 m.signup_nag(
                     game.name,
-                    self.settings.game_url(game.gameid),
+                    self.settings.join_url(game.gameid),
                     invited,
                     joined,
                     game.seats,

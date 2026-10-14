@@ -169,6 +169,7 @@ async def test_signup_nag_pings_invitees_and_repeats_after_interval(env):
     assert await n._signup_tick(now) == 1
     assert "<@U3>" in rec.posts[0] and "1 seat" in rec.posts[0]
     assert "<@U1>" not in rec.posts[0]  # joined players aren't nagged
+    assert "/games/join/" in str(rec.blocks[0]) and "/games/view/" not in str(rec.blocks[0])
     assert await n._signup_tick(now + 3600) == 0
     assert await n._signup_tick(now + 12 * 3600 + 1) == 0  # 22:00, quiet hours
     assert await n._signup_tick(ts(2026, 10, 8, 9)) == 1

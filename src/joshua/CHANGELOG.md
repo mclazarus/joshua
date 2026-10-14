@@ -4,7 +4,11 @@ Newest first. Every release gets a `## Build N · YYYY-MM-DD` entry, numbered on
 The release's commit is stamped into the image when it's built. Once a build has shipped, its
 heading gets the short commit hash: `## Build N · YYYY-MM-DD · abc1234`.
 
-## Build 3 · 2026-10-14
+## Build 4 · 2026-10-14
+- The "Join the game" button on sign-up nags now goes straight to WarGear's join page instead of
+  the game's view page.
+
+## Build 3 · 2026-10-14 · fe85f92
 - `/wargear version` shows which build is running and its commit.
 - `/wargear changelog [build]` shows what changed in the current build or any earlier one.
 - `/wargear unwatch <id>` silences a game's reminders, nags and report; `/wargear watch <id>`

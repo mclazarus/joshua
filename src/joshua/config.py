@@ -70,3 +70,6 @@ class Settings(BaseSettings):
 
     def game_url(self, gameid: int) -> str:
         return f"{self.wargear_base_url}/games/view/{gameid}"
+
+    def join_url(self, gameid: int) -> str:
+        return f"{self.wargear_base_url}/games/join/{gameid}"
