@@ -11,10 +11,10 @@ and you can find it under Settings → Account → API Keys
 | Endpoint | Use in Joshua |
 |---|---|
 | `GET /GetGameList/my?viewselector=Live` | **Main poll.** Live games plus *Open* (sign-up) games the key owner is in |
-| `GET /GetGameList/my?viewselector=Finished[&pagenumber=N]` | Looked up when a game drops off the Live list, to get its winners |
+| `GET /GetGameList/my?viewselector=Finished[&pagenumber=N]` | Fallback when a game drops off the Live list and its history shows no `game_win` |
 | `GET /GetGameList/player?player=<name>` | Returned `[]` in testing, so it isn't used. Every player needs their own key |
 | `GET /GetCurrentTurns` | Not used. Returns `[]` when it isn't your turn, and only covers the key owner |
-| `GET /GetHistoryUpdate/{gameid}` | Once per won, tracked game, for the after-action report. See below |
+| `GET /GetHistoryUpdate/{gameid}` | When a game drops off the Live list: its `game_win` names the winner. Kept for the after-action report. See below |
 | `GET /GetBoardData/{boardid}` | Once per board ever: dice sides, territory names, and the board's fog level |
 
 ## Confirmed against real responses (2026-10-01)
@@ -59,6 +59,8 @@ Sanitized copies are in `tests/fixtures/`. To regenerate them, run `joshua disco
 - **`msgstamps`, `visitstamps`:** dicts keyed by player name, or `false`.
 - **Finished list:** not sorted (15 games, from 2013 to 2026). `pagenumber` hasn't been tested
   yet. The poller walks up to 5 pages and stops at an empty page or one that repeats.
+  On 2026-10-16 a game that had just ended (81545973) wasn't in the first 5 pages, hour after
+  hour. So the poller asks the game's history first and only falls back to this list.
 
 ## GetHistoryUpdate (confirmed 2026-10-13)
 The whole action log of a game, in one response (about 900KB for a 4-player, 66-turn game).

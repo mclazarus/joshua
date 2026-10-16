@@ -4,7 +4,13 @@ Newest first. Every release gets a `## Build N · YYYY-MM-DD` entry, numbered on
 The release's commit is stamped into the image when it's built. Once a build has shipped, its
 heading gets the short commit hash: `## Build N · YYYY-MM-DD · abc1234`.
 
-## Build 4 · 2026-10-14
+## Build 5 · 2026-10-16
+- Joshua now notices when a game ends. It reads the game's own history to find the winner, instead
+  of hunting through WarGear's finished-games list, which could miss a game that just ended. The
+  winner no longer gets "your turn" nags, and the winner post, records and report go out as
+  they should.
+
+## Build 4 · 2026-10-14 · cd014c7
 - The "Join the game" button on sign-up nags now goes straight to WarGear's join page instead of
   the game's view page.
 

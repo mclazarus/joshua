@@ -94,6 +94,11 @@ def parse_history(payload: Any) -> list[Action]:
     return sorted(out, key=lambda x: x.turnid)
 
 
+def game_win(actions: Iterable[Action]) -> Action | None:
+    """The ``game_win`` action (``s`` = the winning seat), if the game has been won."""
+    return next((a for a in actions if a.action == "game_win" and a.seat), None)
+
+
 def resolve(ad: Iterable[int], dd: Iterable[int]) -> tuple[int, int]:
     """(attacker lost, defender lost) under standard rules: pair off highest dice, ties to defender."""
     al = dl = 0

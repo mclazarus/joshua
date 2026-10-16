@@ -122,6 +122,51 @@ async def test_game_leaving_live_list_is_looked_up_in_finished(env):
     assert 7 not in await store.live_gameids()
 
 
+def won_history(seat, at):
+    return {
+        "history": {
+            "turn": [{"@attributes": {"turnid": "9", "timestamp": str(at), "action": "game_win", "s": seat}}]
+        }
+    }
+
+
+async def test_game_leaving_live_list_is_closed_out_from_its_history(env):
+    # The Finished list is unsorted and paginated, and can miss a game that just ended.
+    store, client, poller = env
+    client.live["key-Falken"] = [wg_game(7, ["Falken", "Lightman"], "Lightman")]
+    await poller.poll_once()
+    assert [t.player for t in await store.open_turns()] == ["Lightman"]
+    client.live["key-Falken"] = []
+    client.histories[7] = won_history("2", 1_790_100_000)
+    client.calls.clear()
+    events = await poller.poll_once()
+    assert GameFinished(7, ("Lightman",), False) in events
+    assert not any(c[1] == "Finished" for c in client.calls)
+    assert 7 not in await store.live_gameids()
+    assert await store.open_turns() == []  # no more "your turn" nags for the winner
+    game = await store.game_state(7)
+    assert game.winners == ("Lightman",) and game.endstamp == 1_790_100_000
+    # The history is kept for the after-action report: no second fetch.
+    client.calls.clear()
+    await poller.poll_once()
+    assert _extras(client) == []
+    assert [r.gameid for r in await store.reports_due()] == [7]
+
+
+async def test_history_without_a_win_falls_back_to_finished_list(env):
+    store, client, poller = env
+    client.live["key-Falken"] = [wg_game(7, ["Falken", "Lightman"], "1")]
+    await poller.poll_once()
+    client.live["key-Falken"] = []
+    client.histories[7] = {"history": {"turn": []}}
+    client.finished["key-Falken"] = [
+        wg_game(7, ["Falken", "Lightman"], None, winners=["1"], gamestatus="Finished", endstamp=2)
+    ]
+    events = await poller.poll_once()
+    assert ("key-Falken", "history", 7) in client.calls
+    assert GameFinished(7, ("Falken",), False) in events
+
+
 async def test_closed_gate_skips_cycle(env):
     store, client, poller = env
     client.gate.observe(429, {"Retry-After": "600"})

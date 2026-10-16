@@ -5,8 +5,9 @@ were already covered by an earlier key in the same cycle. So with N players who
 all share the same games, a normal cycle costs one request, not N. Once an hour
 every key is checked anyway, to spot new games.
 
-A live game missing from every Live list it should be on has probably ended,
-so the owning key's Finished list is fetched once to learn who won.
+A live game missing from every Live list it should be on has probably ended.
+Its history (GetHistoryUpdate) says who won. If it shows no win, the owning
+key's Finished list is searched instead. Either is retried hourly.
 
 When a tracked game is won, its history (GetHistoryUpdate) is fetched once for the
 after-action report, plus each board's rules once ever (GetBoardData), which give
@@ -20,10 +21,12 @@ import asyncio
 import logging
 import random
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 
 from joshua.config import Settings
 from joshua.crypto import KeyBox
 from joshua.db import PlayerRow, Store, now_ts
+from joshua.stats import game_win, parse_history
 from joshua.sync import Event, GameFinished, apply
 from joshua.wargear.client import BadApiKey, RateLimited, WarGearClient, WarGearError
 
@@ -146,21 +149,45 @@ class Poller:
         missing = (await self.store.live_gameids()) - covered
         if not missing or not queried:
             return []
+        due = {g for g in missing if now - self._finished_checked.get(g, 0) >= FINISHED_RECHECK}
+        keys = [
+            (player, key, await self.store.games_for_player(player.wargear_name))
+            for player, key in queried
+            if player.wargear_name
+        ]
         events: list[Event] = []
-        for player, key in queried:
-            if not player.wargear_name:
+
+        # First choice: the game's own history. One request, and it says who won, where the
+        # Finished list is unsorted and paginated and can hide a game that just ended.
+        for gameid in sorted(due):
+            via = next(((p, k) for p, k, mine in keys if gameid in mine), None)
+            if via is None:
                 continue
-            theirs = missing & await self.store.games_for_player(player.wargear_name)
-            theirs = {g for g in theirs if now - self._finished_checked.get(g, 0) >= FINISHED_RECHECK}
+            self._finished_checked[gameid] = now
+            try:
+                found = await self._finish_from_history(gameid, via[1], now, via[0].slack_id)
+            except RateLimited:
+                log.warning("rate limited looking up game %s; trying again next hour", gameid)
+                return events
+            except WarGearError as e:
+                log.warning("couldn't fetch history for missing game %s: %s", gameid, e)
+                continue
+            if found is not None:
+                events += found
+                missing.discard(gameid)
+                due.discard(gameid)
+
+        # No win in the history (a terminated game, say): look for it in the Finished lists.
+        for player, key, mine in keys:
+            theirs = due & mine
             if not theirs:
                 continue
-            for gameid in theirs:
-                self._finished_checked[gameid] = now
             try:
                 async for g in self._finished_pages(key):
                     if g.gameid in theirs:
                         events += await apply(self.store, g.normalize(), now, player.slack_id)
                         missing.discard(g.gameid)
+                        due.discard(g.gameid)
                         theirs.discard(g.gameid)
                         if not theirs:
                             break
@@ -182,6 +209,30 @@ class Poller:
                     "UPDATE turns SET ended_at = ? WHERE gameid = ? AND ended_at IS NULL", (now, gameid)
                 )
                 await self.store.db.commit()
+        return events
+
+    async def _finish_from_history(
+        self, gameid: int, key: str, now: int, seen_via: str
+    ) -> list[Event] | None:
+        """Close out a game that left the Live list, if its history has a ``game_win``.
+
+        Returns None when the history doesn't show a win. Keeps the history for the
+        after-action report, so it isn't fetched twice."""
+        prev = await self.store.game_state(gameid)
+        if prev is None:
+            return None
+        payload = await self.client.history(key, gameid)
+        win = game_win(parse_history(payload))
+        winner = next((p.name for p in prev.players if str(p.seat) == win.seat), None) if win else None
+        if win is None or winner is None:
+            log.info("game %s left the Live list but its history shows no win yet", gameid)
+            return None
+        log.info("game %s won by %s (from its history)", gameid, winner)
+        done = replace(prev, status="Finished", winners=(winner,), endstamp=win.timestamp or now)
+        events = await apply(self.store, done, now, seen_via)
+        if await self.store.is_tracked(gameid):
+            await self.store.queue_history(gameid, now)
+            await self.store.save_history(gameid, payload, now)
         return events
 
     async def _fetch_extras(self, queried: list[tuple[PlayerRow, str]], now: int) -> None:
