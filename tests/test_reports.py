@@ -36,7 +36,7 @@ async def test_any_finished_game_of_yours_without_touching_the_store(env):
     client.histories[7] = WON
     text, blocks = await reports.on_demand(store, client, "key", 7, "https://x/7")
     assert "AFTER-ACTION REPORT" in blocks[0]["text"]["text"] and "Lightman won" in text
-    assert ("key", "Finished", 2) in client.calls  # found on page 2
+    assert [c for c in client.calls if c[1] == "Finished"] == [("key", "Finished", 9999)]  # the last page
     assert await store.game_state(7) is None and await store.history_body(7) is None
 
 

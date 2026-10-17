@@ -91,10 +91,24 @@ async def _discover(settings: Settings, args) -> None:
         calls.append(("player", "/GetGameList/player", {"player": args.player}))
     if args.game:
         calls.append(("history", f"/GetHistoryUpdate/{args.game}", {}))
+    if args.paging:
+        calls = [
+            ("won_p1", "/GetGameList/my", {"viewselector": "Games I Won"}),
+            ("won_p2", "/GetGameList/my", {"viewselector": "Games I Won", "pagenumber": 2}),
+        ]
+        if args.host:
+            calls.append(("host_p1", "/GetGameList/host", {"host": args.host}))
+            calls.append(("host_p2", "/GetGameList/host", {"host": args.host, "pagenumber": 2}))
     base = settings.wargear_base_url + settings.wargear_api_path
     async with httpx.AsyncClient(base_url=base, headers={"User-Agent": USER_AGENT}, timeout=30) as http:
+        if args.paging:
+            await _probe_finished_pages(http, key, out, args.find)
         for name, path, params in calls:
-            resp = await http.get(path, params={**params, "api_key": key})
+            try:
+                resp = await http.get(path, params={**params, "api_key": key})
+            except httpx.HTTPError as e:
+                print(f"== {name}: {type(e).__name__}; skipping")
+                continue
             interesting = {
                 k: v
                 for k, v in resp.headers.items()
@@ -106,13 +120,68 @@ async def _discover(settings: Settings, args) -> None:
             print(f"== {name}: HTTP {resp.status_code} {len(resp.content)} bytes")
             for k, v in interesting.items():
                 print(f"   {k}: {v}")
+            body = None
             try:
                 body = resp.json()
                 (out / f"{name}.json").write_text(json.dumps(body, indent=2))
             except ValueError:
                 (out / f"{name}.txt").write_text(resp.text)
+            if args.paging and isinstance(body, list):
+                print("   " + _page_summary(body, args.find))
             await asyncio.sleep(3)  # be polite even while exploring
     print(f"saved to {out}/ (gitignored; sanitize before copying into tests/fixtures)")
+
+
+def _page_summary(games: list, find: int | None) -> str:
+    """Count, id range and end-date range of one page of games: no names."""
+    from datetime import UTC, datetime
+
+    if not games:
+        return "empty"
+    ids = [int(g["gameid"]) for g in games]
+    ends = sorted(int(g.get("endstamp") or 0) for g in games)
+
+    def day(ts: int) -> str:
+        return f"{datetime.fromtimestamp(ts, UTC):%Y-%m-%d}" if ts else "-"
+
+    found = f"  ** has {find} **" if find in ids else ""
+    return f"{len(games)} games, ids {min(ids)}-{max(ids)}, ended {day(ends[0])} to {day(ends[-1])}{found}"
+
+
+async def _probe_finished_pages(http, key: str, out: Path, find: int | None, max_pages: int = 30) -> None:
+    """Walk the Finished list until a page is empty or repeats, to learn page size and order."""
+    previous: set[int] = set()
+    for page in range(1, max_pages + 1):
+        resp = await http.get(
+            "/GetGameList/my", params={"viewselector": "Finished", "pagenumber": page, "api_key": key}
+        )
+        try:
+            body = resp.json()
+        except ValueError:
+            body = resp.text[:200]
+        if not isinstance(body, list):
+            print(f"== finished page {page}: HTTP {resp.status_code}, not a list: {body}; stopping")
+            return
+        (out / f"finished_p{page}.json").write_text(json.dumps(body, indent=2))
+        ids = {int(g["gameid"]) for g in body}
+        print(f"== finished page {page}: {_page_summary(body, find)}")
+        if not ids or ids == previous:
+            print("   (empty or same as the previous page; stopping)")
+            break
+        previous = ids
+        await asyncio.sleep(3)
+    else:
+        print(f"   stopped after {max_pages} pages")
+    # wargear/finished.py relies on a far-off page returning the last page.
+    await asyncio.sleep(3)
+    resp = await http.get(
+        "/GetGameList/my", params={"viewselector": "Finished", "pagenumber": 9999, "api_key": key}
+    )
+    body = resp.json()
+    same = isinstance(body, list) and {int(g["gameid"]) for g in body} == previous
+    print(f"== finished page 9999: {_page_summary(body, find) if isinstance(body, list) else body}")
+    verdict = "same as the last page: good" if same else "NOT the last page: rethink wargear/finished.py"
+    print(f"   {verdict}")
 
 
 def _api_key() -> str:
@@ -220,6 +289,13 @@ def main() -> None:
     d.add_argument("--player", help="also try GetGameList/player for this name")
     d.add_argument("--game", type=int, help="also fetch GetHistoryUpdate for this game")
     d.add_argument("--out", default="tests/fixtures/raw")
+    d.add_argument(
+        "--paging",
+        action="store_true",
+        help="instead: walk every Finished page, and try 'Games I Won' and --host, to learn paging",
+    )
+    d.add_argument("--host", help="with --paging: also try GetGameList/host for this name")
+    d.add_argument("--find", type=int, help="with --paging: say which page has this game id")
     r = sub.add_parser("dry-run", help="poll once and print what would be posted")
     r.add_argument("--me", help="your WarGear name")
     r.add_argument("--report", type=int, help="also print the after-action report for this finished game")

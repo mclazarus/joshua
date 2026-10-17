@@ -584,8 +584,7 @@ REPORT_BUSY = "Still working on your last report. One at a time."
 def no_report(why: str, game: str) -> str:
     return {
         "live": f"*{game}* is still being fought. Reports are for finished games only.",
-        "not_found": f"Game {game} isn't in your finished games (I checked the first few pages). "
-        "Is it yours, and is it over?",
+        "not_found": f"Game {game} isn't in your finished games. Is it yours, and is it over?",
         "empty": f"WarGear has no history for *{game}*.",
         "error": f"WarGear wouldn't hand over the records for {game}. Try again later.",
     }[why]

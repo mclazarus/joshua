@@ -58,7 +58,7 @@ class FakeClient:
         index = (page or 1) - 1
         if pages and not isinstance(pages[0], list):
             pages = [pages]
-        return pages[index] if index < len(pages) else []
+        return pages[min(index, len(pages) - 1)] if pages else []  # past the end: the last page
 
 
 @pytest.fixture
@@ -198,20 +198,19 @@ async def test_closed_gate_skips_cycle(env):
     assert client.calls == []
 
 
-async def test_finished_lookup_walks_pages_and_rechecks_hourly(env):
+async def test_finished_lookup_rechecks_hourly(env):
     store, client, poller = env
     client.live["key-Falken"] = [wg_game(7, ["Falken", "Lightman"], "1")]
     await poller.poll_once()
     client.live["key-Falken"] = []
     old = wg_game(3, ["Falken", "Lightman"], None, gamestatus="Finished", endstamp=1)
-    client.finished["key-Falken"] = [[old], [old]]  # pagenumber ignored: page 2 repeats page 1
+    client.finished["key-Falken"] = [[old]]
     client.calls.clear()
     await poller.poll_once()
-    assert ("key-Falken", "Finished", 2) in client.calls
-    assert ("key-Falken", "Finished", 3) not in client.calls
+    assert ("key-Falken", "Finished", 9999) in client.calls
     client.calls.clear()
     await poller.poll_once()
-    assert not any(c[1] == "Finished" for c in client.calls)  # not again within the hour
+    assert not any(c[1] in ("Finished", "history") for c in client.calls)  # not again within the hour
 
 
 async def test_api_keys_are_encrypted_on_disk(tmp_path):

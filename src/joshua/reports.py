@@ -13,10 +13,10 @@ import zlib
 from typing import Any
 
 from joshua.db import Store
-from joshua.poller import finished_pages
 from joshua.slack import messages as m
 from joshua.stats import parse_history, replay
 from joshua.wargear.client import WarGearClient
+from joshua.wargear.finished import find_finished
 from joshua.wargear.models import BoardInfo, GameState
 
 log = logging.getLogger(__name__)
@@ -58,12 +58,10 @@ async def on_demand(store: Store, client: WarGearClient, key: str, gameid: int, 
     if game is not None and gameid in await store.live_gameids():
         raise NoReport("live", game.name)  # fog: no peeking at a game still being played
     if game is None or not game.finished:  # unknown to us, or closed out without a winner
-        async for g in finished_pages(client, key):
-            if g.gameid == gameid:
-                game = g.normalize()
-                break
-        else:
+        found = await find_finished(client, key, gameid)
+        if found is None:
             raise NoReport("not_found", str(gameid))
+        game = found.normalize()
 
     board = await store.board(game.boardid)
     if board is None and game.boardid:

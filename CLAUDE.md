@@ -32,7 +32,8 @@ returns, which differs from its own Swagger spec.
   by player names.
 - `poller.py`: every ~5 min. Greedy key coverage: the key in the most games goes first, and keys
   whose games are already covered are skipped (all keys get checked hourly). A game that drops
-  off the Live list is looked up in the paginated, unsorted Finished list, at most hourly.
+  off the Live list is finished from its history's `game_win`, at most hourly; failing that,
+  it's searched for in the Finished list by `wargear/finished.py` (last page first, then bisect).
 - `sync.py`: a pure `diff(prev, new) -> events`, plus `apply()`, which writes them to the store.
   New turns are detected with the per-player `turn_counter`.
 - `reminders.py`: the pure `plan_reminders()` / `due_now()` scheduler.

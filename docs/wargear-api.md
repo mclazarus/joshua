@@ -57,10 +57,17 @@ Sanitized copies are in `tests/fixtures/`. To regenerate them, run `joshua disco
   `count_attacks`/`count_fortifies`/`turn_counter` stay visible under fog; `status`, `cards`
   etc. show `"?"`.
 - **`msgstamps`, `visitstamps`:** dicts keyed by player name, or `false`.
-- **Finished list:** not sorted (15 games, from 2013 to 2026). `pagenumber` hasn't been tested
-  yet. The poller walks up to 5 pages and stops at an empty page or one that repeats.
-  On 2026-10-16 a game that had just ended (81545973) wasn't in the first 5 pages, hour after
-  hour. So the poller asks the game's history first and only falls back to this list.
+- **Finished list** (measured 2026-10-16 on a 264-game list, `discover --paging`):
+  - 15 games a page, and `pagenumber` works;
+  - page 1 is an odd set of 15 in no order, and those games appear on no other page;
+  - pages 2..N hold everything else, sorted by game id, oldest first;
+  - a page past the end returns the last page (19 and 9999 both gave page 18 again).
+  So the newest games are always on the last page. `wargear/finished.py` asks for page 9999 to get
+  it (one request for a game that just ended), then bisects pages 2..N by game id, then checks
+  page 1. Before this, the poller walked pages 1–5 and never found game 81545973, which was on
+  page 18. The poller now asks the game's history first, and only falls back to this list.
+- **`viewselector=Games I Won`:** works, 15 a page, same odd shape. **`viewtype=host`:** timed out
+  after 30s. Neither is used.
 
 ## GetHistoryUpdate (confirmed 2026-10-13)
 The whole action log of a game, in one response (about 900KB for a 4-player, 66-turn game).
@@ -117,5 +124,6 @@ A Cloudflare challenge (a 403 with an HTML body) closes the gate the same way a 
 never marks a key as bad.
 
 ## Still open
-- [ ] Does `pagenumber` work for `Finished`, and what's the page size?
+- [x] Does `pagenumber` work for `Finished`, and what's the page size? Yes; 15. See above.
+- [x] Does a far-off page (9999) return the last page, as page N+1 does? Yes (2026-10-16).
 - [ ] What does a terminated game look like? Does it leave the Live list, and with what status?

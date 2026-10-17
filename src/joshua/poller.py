@@ -7,7 +7,8 @@ every key is checked anyway, to spot new games.
 
 A live game missing from every Live list it should be on has probably ended.
 Its history (GetHistoryUpdate) says who won. If it shows no win, the owning
-key's Finished list is searched instead. Either is retried hourly.
+key's Finished list is searched instead (see wargear/finished.py). Either is
+retried hourly.
 
 When a tracked game is won, its history (GetHistoryUpdate) is fetched once for the
 after-action report, plus each board's rules once ever (GetBoardData), which give
@@ -20,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 
 from joshua.config import Settings
@@ -29,14 +30,12 @@ from joshua.db import PlayerRow, Store, now_ts
 from joshua.stats import game_win, parse_history
 from joshua.sync import Event, GameFinished, apply
 from joshua.wargear.client import BadApiKey, RateLimited, WarGearClient, WarGearError
-from joshua.wargear.models import Game
+from joshua.wargear.finished import find_finished
 
 log = logging.getLogger(__name__)
 
 # A live game nobody has seen for this long gets closed out.
 GONE_AFTER = 2 * 86400
-# The Finished list is unordered and may be paginated; don't walk it forever.
-MAX_FINISHED_PAGES = 5
 # Look up a missing game in Finished lists at most this often.
 FINISHED_RECHECK = 3600
 # Game history fetches: retry this often, this many times, then give up on the report.
@@ -46,20 +45,6 @@ HISTORY_ATTEMPTS = 3
 BOARD_RETRY = 6 * 3600
 
 EventSink = Callable[[list[Event]], Awaitable[None]]
-
-
-async def finished_pages(client: WarGearClient, key: str) -> AsyncIterator[Game]:
-    """Yield finished games page by page. Stops at an empty page, or at a page that
-    repeats the previous one (meaning WarGear ignores ``pagenumber``)."""
-    previous: set[int] = set()
-    for page in range(1, MAX_FINISHED_PAGES + 1):
-        games = await client.my_games(key, "Finished", page=None if page == 1 else page)
-        ids = {g.gameid for g in games}
-        if not ids or ids == previous:
-            return
-        previous = ids
-        for g in games:
-            yield g
 
 
 class Poller:
@@ -192,23 +177,20 @@ class Poller:
                 missing.discard(gameid)
                 due.discard(gameid)
 
-        # No win in the history (a terminated game, say): look for it in the Finished lists.
-        for player, key, mine in keys:
-            theirs = due & mine
-            if not theirs:
+        # No win in the history (a terminated game, or a team game whose teams we never saw):
+        # look for it in a Finished list.
+        for gameid in sorted(due):
+            via = next(((p, k) for p, k, mine in keys if gameid in mine), None)
+            if via is None:
                 continue
             try:
-                async for g in finished_pages(self.client, key):
-                    if g.gameid in theirs:
-                        events += await apply(self.store, g.normalize(), now, player.slack_id)
-                        missing.discard(g.gameid)
-                        due.discard(g.gameid)
-                        theirs.discard(g.gameid)
-                        if not theirs:
-                            break
+                g = await find_finished(self.client, via[1], gameid)
             except WarGearError as e:
-                log.warning("couldn't fetch finished games via %s: %s", player.slack_id, e)
+                log.warning("couldn't search finished games via %s: %s", via[0].slack_id, e)
                 break
+            if g is not None:
+                events += await apply(self.store, g.normalize(), now, via[0].slack_id)
+                missing.discard(gameid)
         for gameid in missing:
             state = await self.store.game_state(gameid)
             row = await self.store.db.execute_fetchall(

@@ -4,7 +4,13 @@ Newest first. Every release gets a `## Build N · YYYY-MM-DD` entry, numbered on
 The release's commit is stamped into the image when it's built. Once a build has shipped, its
 heading gets the short commit hash: `## Build N · YYYY-MM-DD · abc1234`.
 
-## Build 6 · 2026-10-16
+## Build 7 · 2026-10-16
+- Finding a finished game is much faster. Joshua checks the newest page of WarGear's
+  finished-games list first, which is one request for a game that just ended, and then jumps
+  straight to the right page for older ones. Before, it read pages 1–5, which hold the oldest
+  games. `/wargear report` works for any finished game, however old.
+
+## Build 6 · 2026-10-16 · cdd48b9
 - After-action reports now call out the biggest deathball (a stack over 20 troops), who turtled
   (turns attacking one territory or none, and how many of those they started with the most
   troops), and possible alliances: neighbours who leave each other alone for 5+ turns each
