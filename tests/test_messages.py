@@ -55,3 +55,24 @@ def test_time_diagnostic_renders_every_format():
         assert f"<!date^{NOW + 23 * 3600 + 55 * 60}^{fmt}|" in body
     assert "tomorrow at 1:55 PM EDT" in body
     assert all(len(b["text"]["text"]) < 3000 for b in blocks if b["type"] == "section")
+
+
+def test_report_shows_deathballs_turtles_and_alliances():
+    from joshua.stats import Deathball, GameStats, Pact, PlayerStats
+
+    stats = GameStats(
+        players={
+            "1": PlayerStats("1", deathball_turns=3, turtle_turns=4, turtle_leading=2),
+            "2": PlayerStats("2", turtle_turns=1),
+            "3": PlayerStats("3"),
+        },
+        biggest_deathball=Deathball("1", 43, 7, 1_790_000_000),
+        pacts=[Pact(("1", "2"), 6, ("3",), 1_790_000_000, 1_790_100_000)],
+    )
+    _, blocks = m.after_action_report(
+        "G", "https://x", stats, {"1": "Falken", "2": "Lightman", "3": "McKittrick"}, {7: "Kamchatka"}
+    )
+    text = blocks[0]["text"]["text"]
+    assert "*Falken* stacked 43 troops on Kamchatka" in text and "(over 20): *Falken* 3" in text
+    assert "*Falken* 4 turns (2 while leading) · *Lightman* 1 turn" in text
+    assert "*Falken* and *Lightman* shared a border for 6 turns each" in text and "hit *McKittrick*" in text

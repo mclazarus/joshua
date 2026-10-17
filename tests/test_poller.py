@@ -153,6 +153,30 @@ async def test_game_leaving_live_list_is_closed_out_from_its_history(env):
     assert [r.gameid for r in await store.reports_due()] == [7]
 
 
+async def test_team_game_won_from_history_names_the_whole_team(env):
+    store, client, poller = env
+    live = wg_game(7, ["Falken", "Lightman", "McKittrick"], "Falken", teamplay="Teamplay")
+    for p, team in zip(live.players, "121", strict=True):
+        p.team = team
+    client.live["key-Falken"] = [live]
+    await poller.poll_once()
+    client.live["key-Falken"] = []
+    client.histories[7] = won_history("1", 1_790_100_000)
+    events = await poller.poll_once()
+    assert GameFinished(7, ("Falken", "McKittrick"), False) in events
+
+
+async def test_team_game_with_hidden_teams_falls_back_to_finished_list(env):
+    store, client, poller = env
+    client.live["key-Falken"] = [wg_game(7, ["Falken", "Lightman", "McKittrick"], "1", teamplay="Teamplay")]
+    await poller.poll_once()
+    client.live["key-Falken"] = []
+    client.histories[7] = won_history("1", 1_790_100_000)
+    events = await poller.poll_once()
+    assert not any(isinstance(e, GameFinished) for e in events)
+    assert ("key-Falken", "Finished") in client.calls
+
+
 async def test_history_without_a_win_falls_back_to_finished_list(env):
     store, client, poller = env
     client.live["key-Falken"] = [wg_game(7, ["Falken", "Lightman"], "1")]

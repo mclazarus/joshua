@@ -109,11 +109,22 @@ returns, which differs from its own Swagger spec.
 - **After-action report:**
   - one per won, tracked game;
   - posted after the first winner nag, during default loud hours;
-  - covers luck vs. the odds, peak territory, the kill board, the biggest battle and the
-    bloodiest turn;
+  - covers luck vs. the odds, peak territory, the kill board, the biggest battle, the
+    bloodiest turn, the biggest deathball (a stack over 20 on the owner's turn), turtling (turns
+    attacking at most one territory, and how many of those started with the most troops) and
+    possible alliances (neighbours who leave each other alone for 5+ turns each while both hit
+    the same third player; 3+ players left; from each player's 3rd turn on; never teammates,
+    and none at all in a team game whose teams we never saw). Definitions are in `stats.py`;
   - names are bold, not @mentions;
   - costs one GetHistoryUpdate per game (retried hourly, 3 tries) plus one GetBoardData per
     board, ever.
+- **On-demand report:** `/wargear report <id>` shows anyone the after-action report for any
+  finished game of theirs, ephemeral, through their own key. It writes nothing about the game
+  (only caches the board's rules), refuses games still being played (fog), and allows one in
+  flight per person. Built by `reports.py`, which the channel report uses too.
+- **Team games:** `teamplay` is `Teamplay`/`Regular`; each player's `team` is kept once WarGear
+  shows it. A team win counts for the whole team. A game finished from its history with
+  unknown teams falls back to the Finished list for the winners.
 - **Records:**
   - win/loss/draw per player, overall and per board, over finished tracked games;
   - a team win counts for every member, and a terminated game is a draw;

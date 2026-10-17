@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import replace
 
 from joshua.config import Settings
@@ -29,6 +29,7 @@ from joshua.db import PlayerRow, Store, now_ts
 from joshua.stats import game_win, parse_history
 from joshua.sync import Event, GameFinished, apply
 from joshua.wargear.client import BadApiKey, RateLimited, WarGearClient, WarGearError
+from joshua.wargear.models import Game
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +46,20 @@ HISTORY_ATTEMPTS = 3
 BOARD_RETRY = 6 * 3600
 
 EventSink = Callable[[list[Event]], Awaitable[None]]
+
+
+async def finished_pages(client: WarGearClient, key: str) -> AsyncIterator[Game]:
+    """Yield finished games page by page. Stops at an empty page, or at a page that
+    repeats the previous one (meaning WarGear ignores ``pagenumber``)."""
+    previous: set[int] = set()
+    for page in range(1, MAX_FINISHED_PAGES + 1):
+        games = await client.my_games(key, "Finished", page=None if page == 1 else page)
+        ids = {g.gameid for g in games}
+        if not ids or ids == previous:
+            return
+        previous = ids
+        for g in games:
+            yield g
 
 
 class Poller:
@@ -183,7 +198,7 @@ class Poller:
             if not theirs:
                 continue
             try:
-                async for g in self._finished_pages(key):
+                async for g in finished_pages(self.client, key):
                     if g.gameid in theirs:
                         events += await apply(self.store, g.normalize(), now, player.slack_id)
                         missing.discard(g.gameid)
@@ -227,8 +242,15 @@ class Poller:
         if win is None or winner is None:
             log.info("game %s left the Live list but its history shows no win yet", gameid)
             return None
-        log.info("game %s won by %s (from its history)", gameid, winner)
-        done = replace(prev, status="Finished", winners=(winner,), endstamp=win.timestamp or now)
+        winners = (winner,)
+        if prev.team_game:
+            # The whole team wins. If we never saw the teams, the Finished list will say.
+            winners = prev.teammates(winner)
+            if not winners:
+                log.info("game %s is a team game with unknown teams; checking the Finished list", gameid)
+                return None
+        log.info("game %s won by %s (from its history)", gameid, ", ".join(winners))
+        done = replace(prev, status="Finished", winners=winners, endstamp=win.timestamp or now)
         events = await apply(self.store, done, now, seen_via)
         if await self.store.is_tracked(gameid):
             await self.store.queue_history(gameid, now)
@@ -275,19 +297,6 @@ class Poller:
                 break
         except RateLimited:
             log.warning("rate limited; board/history fetches wait for the next cycle")
-
-    async def _finished_pages(self, key: str):
-        """Yield finished games page by page. Stops at an empty page, or at a page that
-        repeats the previous one (meaning WarGear ignores ``pagenumber``)."""
-        previous: set[int] = set()
-        for page in range(1, MAX_FINISHED_PAGES + 1):
-            games = await self.client.my_games(key, "Finished", page=None if page == 1 else page)
-            ids = {g.gameid for g in games}
-            if not ids or ids == previous:
-                return
-            previous = ids
-            for g in games:
-                yield g
 
     async def run_forever(self) -> None:
         while True:

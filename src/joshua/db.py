@@ -249,7 +249,9 @@ class Store:
             gametype=g["gametype"],
             seats=g["num_players"],
             players=tuple(
-                PlayerState(p["wargear_name"], p["wargear_id"], p["seat"], p["status"], p["turn_counter"])
+                PlayerState(
+                    p["wargear_name"], p["wargear_id"], p["seat"], p["status"], p["turn_counter"], p["team"]
+                )
                 for p in prows
             ),
             current=current,
@@ -262,6 +264,7 @@ class Store:
             endstamp=g["endstamp"],
             boardid=g["boardid"],
             fog=g["fog"],
+            teamplay=g["teamplay"],
         )
 
     async def save_game(self, s: GameState, seen_via: str | None) -> None:
@@ -269,8 +272,8 @@ class Store:
         await self.db.execute(
             """INSERT INTO games(gameid, name, board, host, status, gametype, num_players, turnstamp,
                                  boot_time, createstamp, startstamp, endstamp, finished, winners,
-                                 first_seen_at, last_seen_at, seen_via, boardid, fog)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 first_seen_at, last_seen_at, seen_via, boardid, fog, teamplay)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(gameid) DO UPDATE SET
                  name = excluded.name, board = excluded.board, host = excluded.host,
                  status = excluded.status, gametype = excluded.gametype,
@@ -281,7 +284,8 @@ class Store:
                  winners = excluded.winners, last_seen_at = excluded.last_seen_at,
                  seen_via = excluded.seen_via,
                  boardid = COALESCE(excluded.boardid, games.boardid),
-                 fog = COALESCE(excluded.fog, games.fog)""",
+                 fog = COALESCE(excluded.fog, games.fog),
+                 teamplay = COALESCE(excluded.teamplay, games.teamplay)""",
             (
                 s.gameid,
                 s.name,
@@ -302,15 +306,30 @@ class Store:
                 seen_via,
                 s.boardid,
                 s.fog,
+                s.teamplay,
             ),
         )
+        # Live games may hide teams that an earlier snapshot showed: keep what we knew.
+        cur = await self.db.execute(
+            "SELECT wargear_name, team FROM game_players WHERE gameid = ? AND team IS NOT NULL", (s.gameid,)
+        )
+        known_teams = {r[0].lower(): r[1] for r in await cur.fetchall()}
         await self.db.execute("DELETE FROM game_players WHERE gameid = ?", (s.gameid,))
         await self.db.executemany(
             """INSERT OR REPLACE INTO game_players(gameid, wargear_name, wargear_id, seat, status,
-                                                    turn_counter, eliminated)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                                    turn_counter, eliminated, team)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             [
-                (s.gameid, p.name, p.id, p.seat, p.status, p.turn_counter, int(p.name in s.eliminated))
+                (
+                    s.gameid,
+                    p.name,
+                    p.id,
+                    p.seat,
+                    p.status,
+                    p.turn_counter,
+                    int(p.name in s.eliminated),
+                    p.team or known_teams.get(p.name.lower()),
+                )
                 for p in s.players
             ],
         )
@@ -590,6 +609,12 @@ class Store:
             "UPDATE game_history SET body = ?, fetched_at = ? WHERE gameid = ?", (body, at, gameid)
         )
         await self.db.commit()
+
+    async def history_body(self, gameid: int) -> bytes | None:
+        """A game's fetched history (zlib-compressed JSON), if we have it."""
+        cur = await self.db.execute("SELECT body FROM game_history WHERE gameid = ?", (gameid,))
+        row = await cur.fetchone()
+        return row[0] if row else None
 
     async def reports_due(self) -> list[PendingReport]:
         """Fetched histories not reported yet, once the game's first winner nag has gone out.

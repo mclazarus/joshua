@@ -4,7 +4,16 @@ Newest first. Every release gets a `## Build N · YYYY-MM-DD` entry, numbered on
 The release's commit is stamped into the image when it's built. Once a build has shipped, its
 heading gets the short commit hash: `## Build N · YYYY-MM-DD · abc1234`.
 
-## Build 5 · 2026-10-16
+## Build 6 · 2026-10-16
+- After-action reports now call out the biggest deathball (a stack over 20 troops), who turtled
+  (turns attacking one territory or none, and how many of those they started with the most
+  troops), and possible alliances: neighbours who leave each other alone for 5+ turns each
+  while both hit the same player. Turns 1–2 never count toward an alliance, and teammates are never called allies.
+- `/wargear report <game>` shows you the after-action report for any finished game of yours.
+  Only you see it, and it doesn't change any stats.
+- Team games: a team win counts for the whole team.
+
+## Build 5 · 2026-10-16 · 0c9ffdf
 - Joshua now notices when a game ends. It reads the game's own history to find the winner, instead
   of hunting through WarGear's finished-games list, which could miss a game that just ended. The
   winner no longer gets "your turn" nags, and the winner post, records and report go out as

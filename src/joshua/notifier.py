@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from joshua import reports
 from joshua.config import Settings, parse_hours
 from joshua.db import OpenTurn, Store, now_ts
 from joshua.reminders import (
@@ -24,7 +25,6 @@ from joshua.reminders import (
     plan_reminders,
 )
 from joshua.slack import messages as m
-from joshua.stats import parse_history, replay
 from joshua.sync import Event, GameFinished, PlayerEliminated, TurnStarted
 
 log = logging.getLogger(__name__)
@@ -345,31 +345,16 @@ class Notifier:
                 continue
             board = await self.store.board(game.boardid)
             try:
-                actions = parse_history(json.loads(zlib.decompress(pending.body)))
-                stats = replay(
-                    actions,
-                    board.attacker_sides if board else 6,
-                    board.defender_sides if board else 6,
-                    len(board.territories) if board else 0,
-                )
+                history = json.loads(zlib.decompress(pending.body))
+                report = reports.render(game, board, history, self.settings.game_url(game.gameid))
             except Exception:  # noqa: BLE001 - a bad log mustn't block the tick forever
                 log.exception("couldn't replay history for game %s", pending.gameid)
                 await self.store.finish_report(pending.gameid, "replay failed")
                 continue
-            if not actions:
+            if report is None:
                 await self.store.finish_report(pending.gameid, "empty history")
                 continue
-            names = {str(p.seat): p.name for p in game.players if p.seat is not None}
-            await self.poster.post(
-                *m.after_action_report(
-                    game.name,
-                    self.settings.game_url(game.gameid),
-                    stats,
-                    names,
-                    board.territories if board else {},
-                    game.winners,
-                )
-            )
+            await self.poster.post(*report)
             await self.store.finish_report(pending.gameid, "posted")
             posted += 1
         return posted

@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 from joshua.db import Record
 from joshua.release import Release
 from joshua.reminders import LAST_CALL, START, T5, T30
-from joshua.stats import NEUTRAL, GameStats
+from joshua.stats import DEATHBALL_MIN, NEUTRAL, GameStats
 
 Message = tuple[str, list[dict]]
 
@@ -431,6 +431,40 @@ def after_action_report(
             f"🩸 *Bloodiest turn:* {who(t.seat)}'s turn{day(t.at)}: {t.losses} units lost on the board."
         )
 
+    if d := stats.biggest_deathball:
+        balls = " · ".join(
+            f"{who(p.seat)} {p.deathball_turns}"
+            for p in stats.ranked("deathball_turns", seats)
+            if p.deathball_turns
+        )
+        lines.append(
+            f"💣 *Biggest deathball:* {who(d.seat)} stacked {d.units} troops on {place(d.tid)}{day(d.at)}."
+            f" Turns with a deathball (over {DEATHBALL_MIN}): {balls}"
+        )
+
+    turtles = sorted(
+        (p for p in stats.ranked("turtle_turns", seats) if p.turtle_turns),
+        key=lambda p: (p.turtle_leading, p.turtle_turns),
+        reverse=True,
+    )
+    if turtles:
+        lines.append(
+            "🐢 *Turtling:* "
+            + " · ".join(
+                f"{who(p.seat)} {p.turtle_turns} turn{'s' if p.turtle_turns != 1 else ''}"
+                + (f" ({p.turtle_leading} while leading)" if p.turtle_leading else "")
+                for p in turtles
+            )
+        )
+
+    for pact in stats.pacts[:2]:
+        a, b = pact.seats
+        enemies = _names([who(e) for e in pact.enemies])
+        lines.append(
+            f"🤝 *Possible alliance:* {who(a)} and {who(b)} shared a border for {pact.rounds} turns each"
+            f" without a shot fired, while both hit {enemies}{day(pact.start)}."
+        )
+
     totals = " · ".join(
         f"{names.get(p.seat, p.seat)}: {p.rolls} rolls, {p.conquests} conquests, {p.card_trades} card trades"
         for p in stats.ranked("conquests", seats)
@@ -541,6 +575,22 @@ def who_table(pairs: Sequence[tuple[str, str | None, str | None]]) -> Message:
     return "Registered players", [_section("*Players on file:*\n" + "\n".join(lines))]
 
 
+REPORT_USAGE = "Usage: `/wargear report <game id or link>`. Any finished game of yours, shown only to you."
+REPORT_NEEDS_KEY = "I need your API key to read your game history. `/wargear apikey`"
+REPORT_WORKING = "RETRIEVING BATTLE RECORDS. STAND BY."
+REPORT_BUSY = "Still working on your last report. One at a time."
+
+
+def no_report(why: str, game: str) -> str:
+    return {
+        "live": f"*{game}* is still being fought. Reports are for finished games only.",
+        "not_found": f"Game {game} isn't in your finished games (I checked the first few pages). "
+        "Is it yours, and is it over?",
+        "empty": f"WarGear has no history for *{game}*.",
+        "error": f"WarGear wouldn't hand over the records for {game}. Try again later.",
+    }[why]
+
+
 HELP = """*GREETINGS. SHALL WE PLAY A GAME?*
 I'm Joshua. I watch our WarGear games and wake you up when it's your move.
 
@@ -551,6 +601,7 @@ I'm Joshua. I watch our WarGear games and wake you up when it's your move.
 `/wargear game <id>`: one game in detail
 `/wargear me`: what's waiting on you
 `/wargear stats [board]`: win/loss/draw records, overall or for one board
+`/wargear report <id|url>`: the after-action report for any finished game of yours, just for you
 `/wargear who`: who's who
 `/wargear unwatch <id|url>`: stop all reminders for a game  ·  `watch <id>` to resume
 `/wargear notme`: "that's not me": drops your WarGear name, keeps your key

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from slack_bolt.async_app import AsyncApp
 
-from joshua import release
+from joshua import release, reports
 from joshua.config import Settings, parse_hours
 from joshua.crypto import KeyBox
 from joshua.db import NameTaken, Store, now_ts
@@ -22,6 +22,8 @@ log = logging.getLogger(__name__)
 USER_REF = re.compile(r"<@([UW][A-Z0-9]+)(?:\|[^>]*)?>")
 GAME_REF = re.compile(r"(\d{3,})")
 API_KEY_SHAPE = re.compile(r"^wg_[a-z]+_[0-9a-fA-F]{16,}$")
+# People with an on-demand report in progress: one at a time each, to go easy on WarGear.
+_reporting: set[str] = set()
 
 
 @dataclass
@@ -190,6 +192,30 @@ def register(app: AsyncApp, deps: Deps) -> None:
                         return await plain(f"Which board? {', '.join(matches)}")
                     board = (exact or matches)[0]
                 await say(m.records_table(await store.records(board), board, boards))
+
+            case "report" | "aar":
+                if not (ref := GAME_REF.search(rest)):
+                    return await plain(m.REPORT_USAGE)
+                p = await store.player(user)
+                if not p or not p.enc_api_key or p.key_ok == 0:
+                    return await plain(m.REPORT_NEEDS_KEY)
+                if user in _reporting:
+                    return await plain(m.REPORT_BUSY)
+                gameid = int(ref.group(1))
+                await plain(m.REPORT_WORKING)
+                _reporting.add(user)
+                try:
+                    report = await reports.on_demand(
+                        store, deps.client, deps.keybox.open(p.enc_api_key), gameid, settings.game_url(gameid)
+                    )
+                except reports.NoReport as e:
+                    return await plain(e.text)
+                except WarGearError as e:
+                    log.warning("on-demand report for game %s failed: %s", gameid, e)
+                    return await plain(m.no_report("error", str(gameid)))
+                finally:
+                    _reporting.discard(user)
+                await say(report)
 
             case "version":
                 await say(m.version_message(release.current(), release.commit()))

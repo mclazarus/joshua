@@ -96,6 +96,7 @@ class Game(WGModel):
     boot_time: int | None = None
     time_remaining: int | None = None
     fog: str | None = None
+    teamplay: str | None = None  # Teamplay/Regular
 
     @field_validator("players", "eliminated", "current_turn", "winners", mode="before")
     @classmethod
@@ -113,6 +114,7 @@ class PlayerState:
     seat: int | None = None
     status: str | None = None
     turn_counter: int | None = None
+    team: str | None = None
 
     @property
     def eliminated(self) -> bool:
@@ -147,6 +149,7 @@ class GameState:
     extra: dict[str, Any] = field(default_factory=dict, compare=False)
     boardid: int | None = None
     fog: str | None = None
+    teamplay: str | None = None
 
     @property
     def finished(self) -> bool:
@@ -176,6 +179,15 @@ class GameState:
         return max(0, self.seats - len(self.joined))
 
     @property
+    def team_game(self) -> bool:
+        return "team" in (self.teamplay or "").lower()
+
+    def teammates(self, name: str) -> tuple[str, ...]:
+        """Everyone on ``name``'s team, ``name`` included. Empty if their team isn't known."""
+        team = next((p.team for p in self.players if p.name == name), None)
+        return tuple(p.name for p in self.players if team and p.team == team)
+
+    @property
     def terminated(self) -> bool:
         return "terminat" in (self.status or "").lower()
 
@@ -199,6 +211,7 @@ class GameState:
                 seat=p.seat,
                 status=p.status,
                 turn_counter=p.turn_counter,
+                team=p.team if p.team not in (None, "0") else None,
             )
             for p in g.players
             if p.name or p.id  # open games list empty seats
@@ -246,6 +259,7 @@ class GameState:
             },
             boardid=g.boardid,
             fog=g.fog,
+            teamplay=g.teamplay,
         )
 
 
